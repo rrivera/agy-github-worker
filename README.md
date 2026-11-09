@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="agy-github-worker logo" width="128" height="128" />
+</p>
+
 # agy-github-worker
 
 [![GitHub Repo](https://img.shields.io/badge/GitHub-rrivera%2Fagy--github--worker-blue.svg)](https://github.com/rrivera/agy-github-worker)
@@ -32,7 +36,8 @@ agy-github-worker/
 ├── plugin.json                              # Plugin manifest
 ├── README.md                                # Repository & installation documentation
 ├── assets/
-│   └── logo.svg                             # Plugin icon
+│   ├── logo.svg                             # Plugin icon (vector)
+│   └── logo.png                             # Plugin icon (rendered PNG)
 ├── skills/
 │   └── github-worker/
 │       ├── SKILL.md                         # Main skill entrypoint
