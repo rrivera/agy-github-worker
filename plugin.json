@@ -2,7 +2,7 @@
   "name": "agy-github-worker",
   "displayName": "GitHub Worker",
   "description": "Autonomous GitHub Issue Worker for agent-ready workflows in Antigravity.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": {
     "name": "rrivera",
     "email": "rrl@live.com.mx",

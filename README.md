@@ -50,11 +50,11 @@ This plugin provides two complementary skills:
 
 ## Installation in Antigravity
 
-Clone the repository into your Antigravity plugins directory:
+Install directly from GitHub via the Antigravity CLI:
 
 ```bash
-mkdir -p ~/.gemini/config/plugins
-git clone https://github.com/rrivera/agy-github-worker ~/.gemini/config/plugins/agy-github-worker
+# Install the core issue worker skill
+agy plugin install https://github.com/rrivera/agy-github-worker
 ```
 
 Alternatively, you can copy the skills directly into your global skills directory:
