@@ -54,11 +54,12 @@ Install directly from GitHub via the Antigravity CLI:
 agy plugin install https://github.com/rrivera/agy-github-worker
 ```
 
-Alternatively, you can copy the skills directly into your global skills directory:
+Alternatively, you can clone and copy the skills directly into your global skills directory:
 
 ```bash
+git clone https://github.com/rrivera/agy-github-worker /tmp/agy-github-worker
 mkdir -p ~/.gemini/config/skills
-cp -r skills/* ~/.gemini/config/skills/
+cp -r /tmp/agy-github-worker/skills/* ~/.gemini/config/skills/
 ```
 
 Restart Antigravity. The `/github-worker` and `/setup-github-worker` slash commands will be available across all your workspaces.
