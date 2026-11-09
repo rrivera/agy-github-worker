@@ -3,6 +3,22 @@
   "displayName": "GitHub Worker",
   "description": "Autonomous GitHub Issue Worker for agent-ready workflows in Antigravity.",
   "version": "1.0.0",
+  "author": {
+    "name": "rrivera",
+    "email": "rrl@live.com.mx",
+    "url": "https://github.com/rrivera"
+  },
+  "homepage": "https://github.com/rrivera/agy-github-worker",
+  "repository": "https://github.com/rrivera/agy-github-worker",
+  "license": "MIT",
+  "keywords": [
+    "github",
+    "worker",
+    "automation",
+    "tdd",
+    "code-review",
+    "skills"
+  ],
   "logo": "assets/logo.svg",
   "suggestedPrompts": [
     "Poll and execute actionable agent-ready issues with /github-worker",
