@@ -4,5 +4,8 @@
   "description": "Antigravity sidecar board for agent-ready GitHub issues",
   "type": "module",
   "main": "main.mjs",
+  "scripts": {
+    "test": "node --test"
+  },
   "dependencies": {}
 }

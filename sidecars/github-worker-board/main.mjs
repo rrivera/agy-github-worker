@@ -8,7 +8,10 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const COLUMNS = [
+/**
+ * Default Kanban columns configured for issue workflow.
+ */
+export const COLUMNS = [
   { id: 'todo', name: 'Todo', color: '#89b4fa' },
   { id: 'in_progress', name: 'In Progress', color: '#fab387' },
   { id: 'waiting', name: 'Waiting on User', color: '#f9e2af' },
@@ -19,32 +22,44 @@ const COLUMNS = [
 /**
  * Resolves target repository from workspace git repository or user-provided override.
  * Strictly follows github-worker Section 1:
+ * - If user provides an explicit override in owner/repo format, prioritizes it.
  * - If inside a git repository, resolves via `gh repo view --json nameWithOwner -q .nameWithOwner`.
- * - If outside a git repository or unresolved, prompts user for OWNER/REPO.
+ * - If outside a git repository or unresolved, returns unresolved status for user prompting.
+ *
+ * @param {string} [workspaceUri] - Workspace URI or local filesystem path.
+ * @param {string} [userOverrideRepo] - Optional user override in owner/repo format.
+ * @param {Function} [execFn=execFileAsync] - Injectable process executor for testability.
+ * @returns {Promise<{ repoSlug: string, owner: string, repo: string, source: string }>}
  */
-async function resolveRepoTarget(workspaceUri, userOverrideRepo) {
+export async function resolveRepoTarget(workspaceUri, userOverrideRepo, execFn = execFileAsync) {
   // If user provided a specific repository in the UI, prioritize it
-  if (userOverrideRepo && typeof userOverrideRepo === 'string' && userOverrideRepo.trim().includes('/')) {
+  if (userOverrideRepo && typeof userOverrideRepo === 'string') {
     const slug = userOverrideRepo.trim();
-    const [owner, repo] = slug.split('/');
-    return { repoSlug: slug, owner, repo, source: 'user-prompt' };
+    if (slug.includes('/')) {
+      const parts = slug.split('/');
+      if (parts.length === 2 && parts[0] && parts[1]) {
+        return { repoSlug: slug, owner: parts[0], repo: parts[1], source: 'user-prompt' };
+      }
+    }
   }
 
   let workspaceDir = '';
-  if (workspaceUri) {
+  if (workspaceUri && typeof workspaceUri === 'string') {
     workspaceDir = workspaceUri.startsWith('file://') ? fileURLToPath(workspaceUri) : workspaceUri;
   }
 
   // Attempt resolving from workspace directory using gh repo view
   if (workspaceDir && existsSync(workspaceDir)) {
     try {
-      const { stdout } = await execFileAsync('gh', ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], {
+      const { stdout } = await execFn('gh', ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], {
         cwd: workspaceDir,
       });
-      const slug = stdout.trim();
+      const slug = (stdout || '').trim();
       if (slug && slug.includes('/')) {
         const [owner, repo] = slug.split('/');
-        return { repoSlug: slug, owner, repo, source: `git (${workspaceDir})` };
+        if (owner && repo) {
+          return { repoSlug: slug, owner, repo, source: `git (${workspaceDir})` };
+        }
       }
     } catch (_) {
       // Not a git repo or gh repo view failed
@@ -55,72 +70,51 @@ async function resolveRepoTarget(workspaceUri, userOverrideRepo) {
 }
 
 /**
- * Fetches open issues labeled agent-ready and recent closed issues labeled agent-ready.
+ * Determines Kanban column status from issue labels and closed status.
+ *
+ * @param {Array<string|{ name: string }>} [labels=[]] - GitHub issue labels.
+ * @param {boolean} [isClosed=false] - Whether the issue is closed.
+ * @returns {string} Column status name ('Todo', 'In Progress', 'Waiting on User', 'In Review', 'Done').
  */
-async function fetchIssuesData(workspaceUri, userOverrideRepo) {
-  const { repoSlug, owner, repo, source } = await resolveRepoTarget(workspaceUri, userOverrideRepo);
+export function determineIssueStatus(labels = [], isClosed = false) {
+  const labelNames = Array.isArray(labels)
+    ? labels.map((l) => (typeof l === 'string' ? l : l?.name || ''))
+    : [];
 
-  if (!repoSlug) {
-    return {
-      needsTargetRepo: true,
-      repository: null,
-      columns: COLUMNS,
-      items: [],
-      lastUpdated: new Date().toISOString(),
-    };
+  if (isClosed || labelNames.includes('status:done')) {
+    return 'Done';
   }
+  if (labelNames.includes('status:in-review')) {
+    return 'In Review';
+  }
+  if (labelNames.includes('status:in-progress')) {
+    return 'In Progress';
+  }
+  if (labelNames.includes('status:waiting-on-user')) {
+    return 'Waiting on User';
+  }
+  return 'Todo';
+}
 
-  const ghRepoArgs = ['-R', repoSlug];
-
-  // Fetch open issues labeled agent-ready, recent closed issues, and open PRs in parallel
-  const [openIssuesRes, closedIssuesRes, prsRes] = await Promise.all([
-    execFileAsync('gh', [
-      'issue',
-      'list',
-      ...ghRepoArgs,
-      '--state',
-      'open',
-      '--label',
-      'agent-ready',
-      '--limit',
-      '100',
-      '--json',
-      'number,title,url,body,labels,createdAt,updatedAt,comments',
-    ], { maxBuffer: 15 * 1024 * 1024 }).then(({ stdout }) => JSON.parse(stdout || '[]')),
-
-    execFileAsync('gh', [
-      'issue',
-      'list',
-      ...ghRepoArgs,
-      '--state',
-      'closed',
-      '--label',
-      'agent-ready',
-      '--limit',
-      '30',
-      '--json',
-      'number,title,url,body,labels,createdAt,updatedAt,closedAt',
-    ], { maxBuffer: 10 * 1024 * 1024 }).then(({ stdout }) => JSON.parse(stdout || '[]')).catch(() => []),
-
-    execFileAsync('gh', [
-      'pr',
-      'list',
-      ...ghRepoArgs,
-      '--state',
-      'all',
-      '--limit',
-      '60',
-      '--json',
-      'number,title,url,state,headRefName,isDraft,createdAt,comments,reviews',
-    ], { maxBuffer: 15 * 1024 * 1024 }).then(({ stdout }) => JSON.parse(stdout || '[]')).catch(() => []),
-  ]);
-
-  // Index PRs by issue number (feat/issue-<NUM> or Closes #<NUM>)
+/**
+ * Indexes pull requests by issue number based on headRefName branch patterns,
+ * body closing keywords (e.g., "Closes #12"), and issue references in titles.
+ *
+ * @param {Array<object>} [pullRequests=[]] - List of raw pull request objects from GitHub CLI.
+ * @returns {Map<number, Array<object>>} Map of issue numbers to referencing PRs.
+ */
+export function indexPullRequestsByIssue(pullRequests = []) {
   const prsByIssue = new Map();
-  for (const pr of prsRes) {
+  if (!Array.isArray(pullRequests)) return prsByIssue;
+
+  for (const pr of pullRequests) {
+    if (!pr) continue;
     const matches = new Set();
+
     const branchMatch = /feat\/issue-(\d+)/i.exec(pr.headRefName || '');
-    if (branchMatch) matches.add(parseInt(branchMatch[1], 10));
+    if (branchMatch) {
+      matches.add(parseInt(branchMatch[1], 10));
+    }
 
     const bodyMatches = (pr.body || '').matchAll(/(?:close[sd]?|fixe?[sd]?|resolve[sd]?)\s+#(\d+)/gi);
     for (const match of bodyMatches) {
@@ -140,125 +134,234 @@ async function fetchIssuesData(workspaceUri, userOverrideRepo) {
     }
   }
 
-  // Combine issues and determine their workflow state and actionability
-  const items = [];
-  const allIssues = [...openIssuesRes, ...closedIssuesRes];
+  return prsByIssue;
+}
 
-  for (const issue of allIssues) {
-    const labelNames = (issue.labels || []).map((l) => (typeof l === 'string' ? l : l.name));
-    const isClosed = Boolean(issue.closedAt || issue.state === 'CLOSED');
+/**
+ * Builds chronological timeline combining issue comments, PR comments, and PR reviews.
+ *
+ * @param {object} [issue={}] - Raw GitHub issue object.
+ * @param {object|null} [primaryPR=null] - Primary associated PR object.
+ * @returns {Array<object>} Chronologically sorted timeline events.
+ */
+export function buildIssueTimeline(issue = {}, primaryPR = null) {
+  const timeline = [];
 
-    let status = 'Todo';
-    if (labelNames.includes('status:done') || isClosed) {
-      status = 'Done';
-    } else if (labelNames.includes('status:in-review')) {
-      status = 'In Review';
-    } else if (labelNames.includes('status:in-progress')) {
-      status = 'In Progress';
-    } else if (labelNames.includes('status:waiting-on-user')) {
-      status = 'Waiting on User';
-    } else {
-      status = 'Todo';
-    }
+  for (const comment of (issue?.comments || [])) {
+    if (!comment) continue;
+    timeline.push({
+      source: 'issue_comment',
+      author: comment.author?.login || '',
+      body: comment.body || '',
+      timestamp: comment.createdAt,
+    });
+  }
 
-    const issuePRs = prsByIssue.get(issue.number) || [];
-    const primaryPR = issuePRs[0] || null;
-
-    // Timeline merge for action classification
-    const timeline = [];
-    for (const comment of (issue.comments || [])) {
+  if (primaryPR) {
+    for (const comment of (primaryPR.comments || [])) {
+      if (!comment) continue;
       timeline.push({
-        source: 'issue_comment',
+        source: 'pr_comment',
         author: comment.author?.login || '',
         body: comment.body || '',
         timestamp: comment.createdAt,
       });
     }
-    if (primaryPR) {
-      for (const comment of (primaryPR.comments || [])) {
+
+    for (const review of (primaryPR.reviews || [])) {
+      if (!review) continue;
+      if (review.body || review.state === 'APPROVED' || review.state === 'CHANGES_REQUESTED') {
         timeline.push({
-          source: 'pr_comment',
-          author: comment.author?.login || '',
-          body: comment.body || '',
-          timestamp: comment.createdAt,
+          source: 'pr_review',
+          author: review.author?.login || '',
+          state: review.state,
+          body: review.body || '',
+          timestamp: review.submittedAt || review.createdAt,
         });
       }
-      for (const review of (primaryPR.reviews || [])) {
-        if (review.body || review.state === 'APPROVED' || review.state === 'CHANGES_REQUESTED') {
-          timeline.push({
-            source: 'pr_review',
-            author: review.author?.login || '',
-            state: review.state,
-            body: review.body || '',
-            timestamp: review.submittedAt || review.createdAt,
-          });
-        }
-      }
     }
+  }
 
-    timeline.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  timeline.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  return timeline;
+}
 
-    let lastAgentIdx = -1;
-    let lastAgentEvent = null;
-    for (let i = 0; i < timeline.length; i++) {
-      const item = timeline[i];
-      const isAgent = (item.body || '').includes('<!-- antigravity-agent:');
-      if (isAgent) {
-        lastAgentIdx = i;
-        lastAgentEvent = item;
-      }
+/**
+ * Classifies current issue actionability and recommended action based on workflow status and timeline.
+ *
+ * @param {string} status - Column status ('Todo', 'In Progress', 'In Review', 'Waiting on User', 'Done').
+ * @param {Array<object>} [timeline=[]] - Chronological timeline events.
+ * @returns {{ action: string, actionable: boolean }}
+ */
+export function classifyIssueAction(status, timeline = []) {
+  let lastAgentIdx = -1;
+  let lastAgentEvent = null;
+
+  for (let i = 0; i < timeline.length; i++) {
+    const item = timeline[i];
+    const body = item?.body || '';
+    const isAgent =
+      body.includes('<!-- antigravity-agent:') ||
+      body.includes('verdict=REQUEST_CHANGES') ||
+      body.includes('Verdict: REQUEST_CHANGES') ||
+      item?.state === 'CHANGES_REQUESTED';
+
+    if (isAgent) {
+      lastAgentIdx = i;
+      lastAgentEvent = item;
     }
+  }
 
-    const humanCommentsAfterAgent = timeline
-      .slice(lastAgentIdx + 1)
-      .filter((ev) => !(ev.body || '').includes('<!-- antigravity-agent:'));
+  const humanCommentsAfterAgent = timeline
+    .slice(lastAgentIdx + 1)
+    .filter((ev) => {
+      const b = ev?.body || '';
+      return !(
+        b.includes('<!-- antigravity-agent:') ||
+        b.includes('verdict=REQUEST_CHANGES') ||
+        b.includes('Verdict: REQUEST_CHANGES') ||
+        ev?.state === 'CHANGES_REQUESTED'
+      );
+    });
 
-    let action = 'WAITING_ON_USER';
-    if (status === 'Done') {
-      action = 'NONE';
-    } else if (status === 'Todo') {
-      if (lastAgentIdx === -1) action = 'NEEDS_PLAN';
-      else if (humanCommentsAfterAgent.length > 0) action = 'USER_REPLIED';
-      else action = 'WAITING_ON_USER';
+  let action = 'WAITING_ON_USER';
+  if (status === 'Done') {
+    action = 'NONE';
+  } else if (status === 'Todo') {
+    if (lastAgentIdx === -1) {
+      action = 'NEEDS_PLAN';
     } else if (humanCommentsAfterAgent.length > 0) {
       action = 'USER_REPLIED';
-    } else if (status === 'In Progress') {
-      if (lastAgentIdx === -1) {
-        action = 'NEEDS_PLAN';
-      } else {
-        const body = lastAgentEvent?.body || '';
-        const requestsChanges =
-          body.includes('verdict=REQUEST_CHANGES') ||
-          body.includes('Verdict: REQUEST_CHANGES') ||
-          lastAgentEvent?.state === 'CHANGES_REQUESTED';
-        action = requestsChanges ? 'NEEDS_REVISION' : 'WAITING_ON_USER';
-      }
     } else {
       action = 'WAITING_ON_USER';
     }
-
-    const actionable = action !== 'WAITING_ON_USER' && action !== 'NONE';
-
-    items.push({
-      id: `issue-${issue.number}`,
-      number: issue.number,
-      title: issue.title,
-      url: issue.url,
-      state: isClosed ? 'CLOSED' : 'OPEN',
-      status,
-      action,
-      actionable,
-      labels: labelNames,
-      updatedAt: issue.updatedAt || issue.createdAt,
-      pullRequests: issuePRs.map((pr) => ({
-        number: pr.number,
-        title: pr.title,
-        url: pr.url,
-        state: pr.state,
-        isDraft: Boolean(pr.isDraft),
-      })),
-    });
+  } else if (humanCommentsAfterAgent.length > 0) {
+    action = 'USER_REPLIED';
+  } else if (status === 'In Progress') {
+    if (lastAgentIdx === -1) {
+      action = 'NEEDS_PLAN';
+    } else {
+      const body = lastAgentEvent?.body || '';
+      const requestsChanges =
+        body.includes('verdict=REQUEST_CHANGES') ||
+        body.includes('Verdict: REQUEST_CHANGES') ||
+        lastAgentEvent?.state === 'CHANGES_REQUESTED';
+      action = requestsChanges ? 'NEEDS_REVISION' : 'WAITING_ON_USER';
+    }
+  } else {
+    action = 'WAITING_ON_USER';
   }
+
+  const actionable = action !== 'WAITING_ON_USER' && action !== 'NONE';
+  return { action, actionable };
+}
+
+/**
+ * Normalizes a raw GitHub issue and its associated PRs into a standardized board card item.
+ *
+ * @param {object} issue - Raw GitHub issue object.
+ * @param {Array<object>} [issuePRs=[]] - List of PRs linked to this issue.
+ * @returns {object} Standardized issue item.
+ */
+export function formatIssueItem(issue, issuePRs = []) {
+  const labelNames = (issue?.labels || []).map((l) => (typeof l === 'string' ? l : l?.name || ''));
+  const isClosed = Boolean(issue?.closedAt || issue?.state === 'CLOSED');
+  const status = determineIssueStatus(labelNames, isClosed);
+  const primaryPR = issuePRs[0] || null;
+
+  const timeline = buildIssueTimeline(issue, primaryPR);
+  const { action, actionable } = classifyIssueAction(status, timeline);
+
+  return {
+    id: `issue-${issue.number}`,
+    number: issue.number,
+    title: issue.title || '',
+    url: issue.url || '',
+    state: isClosed ? 'CLOSED' : 'OPEN',
+    status,
+    action,
+    actionable,
+    labels: labelNames,
+    updatedAt: issue.updatedAt || issue.createdAt || new Date().toISOString(),
+    pullRequests: issuePRs.map((pr) => ({
+      number: pr.number,
+      title: pr.title || '',
+      url: pr.url || '',
+      state: pr.state || 'OPEN',
+      isDraft: Boolean(pr.isDraft),
+    })),
+  };
+}
+
+/**
+ * Fetches open issues labeled agent-ready, recent closed issues, and associated PRs.
+ *
+ * @param {string} [workspaceUri] - Workspace directory URI.
+ * @param {string} [userOverrideRepo] - Optional user override repository.
+ * @param {Function} [execFn=execFileAsync] - Injectable process executor.
+ * @returns {Promise<object>} Issue board data structure.
+ */
+export async function fetchIssuesData(workspaceUri, userOverrideRepo, execFn = execFileAsync) {
+  const { repoSlug, owner, repo, source } = await resolveRepoTarget(workspaceUri, userOverrideRepo, execFn);
+
+  if (!repoSlug) {
+    return {
+      needsTargetRepo: true,
+      repository: null,
+      columns: COLUMNS,
+      items: [],
+      lastUpdated: new Date().toISOString(),
+    };
+  }
+
+  const ghRepoArgs = ['-R', repoSlug];
+
+  // Fetch open issues labeled agent-ready, recent closed issues, and open PRs in parallel
+  const [openIssuesRes, closedIssuesRes, prsRes] = await Promise.all([
+    execFn('gh', [
+      'issue',
+      'list',
+      ...ghRepoArgs,
+      '--state',
+      'open',
+      '--label',
+      'agent-ready',
+      '--limit',
+      '100',
+      '--json',
+      'number,title,url,body,labels,createdAt,updatedAt,comments',
+    ], { maxBuffer: 15 * 1024 * 1024 }).then(({ stdout }) => JSON.parse(stdout || '[]')),
+
+    execFn('gh', [
+      'issue',
+      'list',
+      ...ghRepoArgs,
+      '--state',
+      'closed',
+      '--label',
+      'agent-ready',
+      '--limit',
+      '30',
+      '--json',
+      'number,title,url,body,labels,createdAt,updatedAt,closedAt',
+    ], { maxBuffer: 10 * 1024 * 1024 }).then(({ stdout }) => JSON.parse(stdout || '[]')).catch(() => []),
+
+    execFn('gh', [
+      'pr',
+      'list',
+      ...ghRepoArgs,
+      '--state',
+      'all',
+      '--limit',
+      '60',
+      '--json',
+      'number,title,url,state,headRefName,isDraft,createdAt,comments,reviews',
+    ], { maxBuffer: 15 * 1024 * 1024 }).then(({ stdout }) => JSON.parse(stdout || '[]')).catch(() => []),
+  ]);
+
+  const prsByIssue = indexPullRequestsByIssue(prsRes);
+  const allIssues = [...openIssuesRes, ...closedIssuesRes];
+  const items = allIssues.map((issue) => formatIssueItem(issue, prsByIssue.get(issue.number) || []));
 
   return {
     needsTargetRepo: false,
@@ -281,7 +384,10 @@ const isAntigravityEnv = Boolean(
   process.env.ANTIGRAVITY_SIDECAR_WEB_PORT
 );
 
-async function start() {
+/**
+ * Initializes and starts the Sidecar application in Antigravity or standalone HTTP server mode.
+ */
+export async function start() {
   if (isAntigravityEnv) {
     const { SidecarApp, Response: SdkResponse } = await import('sidecar_sdk');
     const app = new SidecarApp();
@@ -364,7 +470,10 @@ async function start() {
   }
 }
 
-start().catch((err) => {
-  console.error('[github-worker-board] Fatal error:', err);
-  process.exit(1);
-});
+// Only start the server when run directly as CLI entrypoint
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  start().catch((err) => {
+    console.error('[github-worker-board] Fatal error:', err);
+    process.exit(1);
+  });
+}
