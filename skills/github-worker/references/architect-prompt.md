@@ -47,8 +47,8 @@ When decomposing implementation inside `.worktrees/issue-<NUM>`, define and invo
    - Proceed immediately to implementation.
 3. **Create Fresh Worktree & Branch**:
    ```bash
-   git fetch origin main
-   git worktree add .worktrees/issue-<NUM> -b "feat/issue-<NUM>" origin/main
+   git fetch origin "<BASE_BRANCH>"
+   git worktree add .worktrees/issue-<NUM> -b "feat/issue-<NUM>" "origin/<BASE_BRANCH>"
    ```
 4. **TDD Implementation & Quality Gates**:
    - Work exclusively inside `.worktrees/issue-<NUM>`.
@@ -57,31 +57,11 @@ When decomposing implementation inside `.worktrees/issue-<NUM>`, define and invo
    - Run all repository quality gates (tests, race detector, linter, typecheck, build).
 5. **Upstream Rebase, Conflict Resolution & Quality Gates**:
    - Work exclusively inside `.worktrees/issue-<NUM>`.
-   - Check if `origin/main` has advanced ahead:
-     ```bash
-     git -C ".worktrees/issue-<NUM>" fetch origin main
-     BEHIND_COUNT=$(git -C ".worktrees/issue-<NUM>" rev-list --count HEAD..origin/main)
-     if [ "$BEHIND_COUNT" -gt 0 ]; then
-       if ! git -C ".worktrees/issue-<NUM>" rebase origin/main; then
-         CONFLICTS=$(git -C ".worktrees/issue-<NUM>" diff --name-only --diff-filter=U)
-         # Resolve conflicts cleanly preserving both base updates and feature logic
-         git -C ".worktrees/issue-<NUM>" add $CONFLICTS
-         git -C ".worktrees/issue-<NUM>" rebase --continue
-       fi
-     fi
-     ```
-   - Verify all tests, race detectors, linters, typecheckers, and builds pass.
+   - Fetch `origin/<BASE_BRANCH>`. If `<BASE_BRANCH>` has moved ahead, rebase onto `origin/<BASE_BRANCH>` and resolve any merge conflicts cleanly.
+   - Run and pass all repository quality gates (tests, race detectors, linters, typecheckers, builds).
 6. **Commit, Push & Open PR**:
-   - Commit changes and push:
-     ```bash
-     git -C ".worktrees/issue-<NUM>" push -u origin "feat/issue-<NUM>"
-     ```
-   - Open the Pull Request (`Closes #<NUM>` + summary):
-     ```bash
-     gh pr create -R "$REPO" --base main --head "feat/issue-<NUM>" \
-       --title "feat: <title> (#<NUM>)" \
-       --body-file <PR_BODY_MD>
-     ```
+   - Commit changes and push the branch to `origin`.
+   - Open the Pull Request (`Closes #<NUM>` + summary) targeting `--base "<BASE_BRANCH>"` via `gh pr create`.
    - Return the PR number and head commit SHA to the orchestrator.
 
 ### Path B: `USER_REPLIED`, `NEEDS_REVISION`, or Failing CI Checks (Iterative Update)
@@ -98,11 +78,11 @@ When decomposing implementation inside `.worktrees/issue-<NUM>`, define and invo
    elif git show-ref --verify --quiet "refs/remotes/origin/feat/issue-<NUM>"; then
      git worktree add ".worktrees/issue-<NUM>" -B "feat/issue-<NUM>" "origin/feat/issue-<NUM>"
    else
-     git worktree add ".worktrees/issue-<NUM>" -b "feat/issue-<NUM>" origin/main
+     git worktree add ".worktrees/issue-<NUM>" -b "feat/issue-<NUM>" "origin/<BASE_BRANCH>"
    fi
    ```
 3. **Upstream Rebase, Delta Fixes & Re-Verify Quality Gates**:
-   - Fetch `origin/main` and rebase onto latest main, resolving any merge conflicts.
+   - Fetch `origin/<BASE_BRANCH>` and rebase onto latest `<BASE_BRANCH>`, resolving any merge conflicts.
    - Address every human comment, peer review `REQUEST_CHANGES` item, or CI failure inside `.worktrees/issue-<NUM>`.
    - Add or update regression tests covering the requested changes.
    - Re-run all mandatory quality gates until clean.
