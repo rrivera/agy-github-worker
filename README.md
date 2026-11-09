@@ -16,16 +16,13 @@ Core Antigravity plugin providing the autonomous `/github-worker` skill for agen
 `agy-github-worker` is a fully autonomous issue worker engine built specifically for Antigravity:
 
 - **Autonomous Issue Polling & Scoped Targeting**: Scans target repositories for issues opted in via `agent-ready`. Supports targeting specific tickets (`/github-worker for issue #12`), milestones (`for the v1.0 milestone`), labels (`with priority:high label`), or baseline branches (`/github-worker against develop branch`).
-- **Persistent Policy Configuration (`/setup-github-worker`)**: Interactively establishes and records project or global worker policies directly in `AGENTS.md` (baseline branch, merge policy, CI gating), eliminating repetitive instructions across runs.
+- **Persistent Configuration (`/setup-github-worker`)**: Interactively establishes and records project or global worker policies directly in `AGENTS.md`.
 - **Workflow State Management**: Manages state progression through labels (`status:todo`, `status:in-progress`, `status:waiting-on-user`, `status:in-review`, `status:done`).
 - **Parallel Subagent Dispatch**: Spawns isolated `architect` subagents in dedicated git worktrees (`.worktrees/issue-<number>`), isolating builds and tests.
-- **Dynamic Baseline & Auto-Rebase**: Automatically detects the repository's default branch (or user-specified base branch), fetches upstream changes, rebases cleanly, and resolves merge conflicts before testing and PR submission.
+- **Dynamic Rebasing & Merge Safety**: Automatically rebases cleanly against upstream changes, resolves merge conflicts, and keeps PRs in `status:in-review` for human approval by default.
 - **TDD Quality Gate**: Enforces Test-Driven Development (Red -> Green -> Refactor) and empirical verification before opening Pull Requests.
 - **CI / GitHub Actions Gating**: Automatically watches PR status checks on repositories with active GitHub Actions workflows, ensuring all CI tests pass before dispatching peer reviewers.
 - **3-Axis Peer Code Review**: Automatically dispatches parallel read-only review subagents (`spec-reviewer`, `standards-reviewer`, `security-reviewer`) to evaluate changes against observable predicates.
-- **Rate-Limit Awareness**: Provides guidance and proactive quota checks via GitHub API rate-limit endpoints.
-- **Prompt Injection Defense**: Automatically strips and ignores all invisible HTML/Markdown comments (`<!-- ... -->`) from issue descriptions and human comments (allowing only `<!-- antigravity-agent: ... -->` for state tracking), mitigating malicious hidden prompt injection.
-- **Manual Merge Safety**: Keeps approved PRs in `status:in-review` for human approval by default, with explicit user opt-in for automated squash-merging.
 
 ---
 
