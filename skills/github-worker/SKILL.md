@@ -31,7 +31,7 @@ The worker **only** operates on issues carrying the **`agent-ready`** label. Rem
 | **Todo** | `agent-ready` + (`status:todo` or no `status:*` label) | `OPEN` | **`NEEDS_PLAN`** if no comment contains `<!-- antigravity-agent:`; **`USER_REPLIED`** if the latest comment across the issue and linked PR is from a human. |
 | **In Progress** | `agent-ready` + `status:in-progress` | `OPEN` | Active research, TDD implementation, and peer review loop. **`NEEDS_PLAN`** if no agent comment exists yet; **`NEEDS_REVISION`** if the latest agent review marker has `verdict=REQUEST_CHANGES`; **`USER_REPLIED`** if a human comments after the latest agent activity. |
 | **Waiting on User** | `agent-ready` + `status:waiting-on-user` | `OPEN` | Paused awaiting human clarification or escalation resolution (e.g., after hitting the 3-cycle review cap). Actionable (**`USER_REPLIED`**) only when a human posts a comment or review after the latest `<!-- antigravity-agent:` marker. |
-| **In Review** | `agent-ready` + `status:in-review` | `OPEN` | Open PR has 3/3 `APPROVE` peer reviews, rebased and verified against `main`. Ready for automated squash-merge into `status:done` (or human review if auto-merge is disabled); becomes **`USER_REPLIED`** if a human posts new feedback. |
+| **In Review** | `agent-ready` + `status:in-review` | `OPEN` | Open PR has 3/3 `APPROVE` peer reviews, rebased and verified against `main`. Stays in `status:in-review` for manual human merge by default (only auto-merges if explicitly instructed in conversation); becomes **`USER_REPLIED`** if a human posts new comments (including inline diff reviews). |
 | **Done** | `agent-ready` + `status:done` | `CLOSED` | PR squash-merged, remote/local worktree branch cleaned up, and issue closed with `status:done`. Ignored during polling. |
 
 ### Helper Pattern: Transitioning an Issue's Status Label
@@ -49,15 +49,16 @@ gh issue edit <NUM> -R "$REPO" \
 
 ## 3. Polling & Classifying Actionable Issues (Merged Issue + PR Timeline `jq` Filter)
 
-Fetch open `agent-ready` issues and open PRs, then run this single `jq` filter to merge issue comments, PR issue-thread comments, and PR reviews into one chronological timeline by timestamp (`createdAt` / `submittedAt`) and classify each issue:
+Fetch open `agent-ready` issues, open PRs, and inline PR review comments, then run this single `jq` filter to merge issue comments, PR issue-thread comments, inline PR diff comments, and PR reviews into one chronological timeline by timestamp (`createdAt` / `submittedAt` / `created_at`) and classify each issue:
 
 ```bash
 ISSUES_JSON=$(gh issue list -R "$REPO" --state open --label "agent-ready" --limit 100 \
   --json number,title,url,body,labels,comments)
 PRS_JSON=$(gh pr list -R "$REPO" --state open --limit 100 \
   --json number,headRefName,url,comments,reviews)
+INLINE_COMMENTS_JSON=$(gh api "repos/$REPO/pulls/comments?per_page=100" 2>/dev/null || echo "[]")
 
-jq -n --argjson issues "$ISSUES_JSON" --argjson prs "$PRS_JSON" '
+jq -n --argjson issues "$ISSUES_JSON" --argjson prs "$PRS_JSON" --argjson inlines "$INLINE_COMMENTS_JSON" '
   $issues | map(
     . as $issue |
     ("feat/issue-" + ($issue.number | tostring)) as $branch |
@@ -86,6 +87,14 @@ jq -n --argjson issues "$ISSUES_JSON" --argjson prs "$PRS_JSON" '
           body: (.body // ""),
           timestamp: .createdAt
         })),
+        ($inlines // [] | map(
+          select($pr != null and ((.pull_request_url // "") | endswith("/" + ($pr.number | tostring)))) | {
+            source: "pr_inline_comment",
+            author: .user.login,
+            body: (.body // ""),
+            timestamp: .created_at
+          }
+        )),
         ($pr.reviews // [] | map(select((.body // "") != "" or .state == "APPROVED" or .state == "CHANGES_REQUESTED") | {
           source: "pr_review",
           author: .author.login,
@@ -237,7 +246,8 @@ The complexity tier only selects each reviewer's `Model` and `Reasoning-Level` (
        --remove-label "status:todo,status:in-progress,status:in-review,status:done"
      ```
 
-### Rebase, Post-Rebase Quality Verification, Hand-Off & Automated Merge (`status:done`)
+### Rebase, Post-Rebase Quality Verification, Hand-Off & Merge Policy
+
 Once all 3 peer reviewers record `APPROVE`:
 
 1. **Mandatory Rebase & Post-Rebase Quality Gate Verification**:
@@ -259,19 +269,25 @@ Once all 3 peer reviewers record `APPROVE`:
      # Must report: "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN"
      ```
 
-2. **Post `review-ready` Summary & Transition to `status:in-review`**:
+2. **Post `review-ready` Summary, Transition to `status:in-review` & Cleanup Worktree**:
    - Post the completion summary (ending with `<!-- antigravity-agent: phase=review-ready -->`) via `gh issue comment <NUM> -R "$REPO" --body-file <SUMMARY_MD>`.
    - Transition the issue label to `status:in-review` (Section 2).
+   - Clean up the local worktree:
+     ```bash
+     git worktree remove ".worktrees/issue-<NUM>" --force
+     ```
 
-3. **Automated Squash-Merge, Worktree Cleanup & Transition to `status:done`**:
-   - Follows the repository's merge policy (aligned with `AGENTS.md` automated completion; if the user explicitly requested human merge sign-off, stop at `status:in-review` above so the human can merge and apply `status:done`):
+3. **Merge Policy: Manual Merge by Default vs. Explicit Auto-Merge Preference**:
+   - **Default Behavior (Do Not Merge Automatically)**:
+     By default, the worker **never** merges the PR or closes the issue. It stops here at `status:in-review` and awaits human review and manual merge. Notify the user with links to the issue, PR, and review reports.
+   - **Explicit Opt-In (Per-Conversation Auto-Merge Preference)**:
+     Only proceed to squash-merge and mark `status:done` if the user explicitly provided an auto-merge preference in their conversation request (for example: `"pull the issues with /github-worker. Proceed to merge them and mark as done without my review"`, `"auto-merge on approval"`, or `"merge automatically"`):
      ```bash
      # 1. Squash-merge PR and delete remote branch
      gh pr merge <PR_NUM> -R "$REPO" --squash --delete-branch
 
-     # 2. Fast-forward local main and remove isolated worktree
+     # 2. Fast-forward local main
      git checkout main && git pull --ff-only origin main
-     git worktree remove ".worktrees/issue-<NUM>" --force
 
      # 3. Transition issue label to status:done and ensure issue is closed
      gh label create "status:done" -R "$REPO" --color "5319E7" --description "Merged and completed" --force
@@ -281,4 +297,4 @@ Once all 3 peer reviewers record `APPROVE`:
      gh issue close <NUM> -R "$REPO"
      ```
 
-**Completion Criterion**: Every actionable `agent-ready` issue has either completed all 3 peer reviews (`APPROVE`), passed post-rebase quality gates, merged cleanly to `main` with its worktree removed and label set to `status:done` (or `status:in-review` if awaiting human merge), or escalated cleanly to `status:waiting-on-user` with a `phase=question` comment.
+**Completion Criterion**: Every actionable `agent-ready` issue has either completed all 3 peer reviews (`APPROVE`), passed post-rebase quality gates, and transitioned to `status:in-review` awaiting manual human merge (or merged cleanly to `main` with its worktree removed and label set to `status:done` if the user explicitly enabled auto-merge in the conversation), or escalated cleanly to `status:waiting-on-user` with a `phase=question` comment.

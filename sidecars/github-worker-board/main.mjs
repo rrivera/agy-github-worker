@@ -138,13 +138,14 @@ export function indexPullRequestsByIssue(pullRequests = []) {
 }
 
 /**
- * Builds chronological timeline combining issue comments, PR comments, and PR reviews.
+ * Builds chronological timeline combining issue comments, PR comments, PR reviews, and inline diff comments.
  *
  * @param {object} [issue={}] - Raw GitHub issue object.
  * @param {object|null} [primaryPR=null] - Primary associated PR object.
+ * @param {Array<object>} [inlineComments=[]] - Inline PR review diff comments.
  * @returns {Array<object>} Chronologically sorted timeline events.
  */
-export function buildIssueTimeline(issue = {}, primaryPR = null) {
+export function buildIssueTimeline(issue = {}, primaryPR = null, inlineComments = []) {
   const timeline = [];
 
   for (const comment of (issue?.comments || [])) {
@@ -165,6 +166,16 @@ export function buildIssueTimeline(issue = {}, primaryPR = null) {
         author: comment.author?.login || '',
         body: comment.body || '',
         timestamp: comment.createdAt,
+      });
+    }
+
+    for (const comment of (inlineComments || [])) {
+      if (!comment) continue;
+      timeline.push({
+        source: 'pr_inline_comment',
+        author: comment.user?.login || comment.author?.login || comment.author || '',
+        body: comment.body || '',
+        timestamp: comment.created_at || comment.createdAt || comment.timestamp,
       });
     }
 
@@ -261,15 +272,16 @@ export function classifyIssueAction(status, timeline = []) {
  *
  * @param {object} issue - Raw GitHub issue object.
  * @param {Array<object>} [issuePRs=[]] - List of PRs linked to this issue.
+ * @param {Array<object>} [inlineComments=[]] - Inline PR review diff comments for the primary PR.
  * @returns {object} Standardized issue item.
  */
-export function formatIssueItem(issue, issuePRs = []) {
+export function formatIssueItem(issue, issuePRs = [], inlineComments = []) {
   const labelNames = (issue?.labels || []).map((l) => (typeof l === 'string' ? l : l?.name || ''));
   const isClosed = Boolean(issue?.closedAt || issue?.state === 'CLOSED');
   const status = determineIssueStatus(labelNames, isClosed);
   const primaryPR = issuePRs[0] || null;
 
-  const timeline = buildIssueTimeline(issue, primaryPR);
+  const timeline = buildIssueTimeline(issue, primaryPR, inlineComments);
   const { action, actionable } = classifyIssueAction(status, timeline);
 
   return {
@@ -294,7 +306,7 @@ export function formatIssueItem(issue, issuePRs = []) {
 }
 
 /**
- * Fetches open issues labeled agent-ready, recent closed issues, and associated PRs.
+ * Fetches open issues labeled agent-ready, recent closed issues, associated PRs, and inline PR comments.
  *
  * @param {string} [workspaceUri] - Workspace directory URI.
  * @param {string} [userOverrideRepo] - Optional user override repository.
@@ -316,8 +328,8 @@ export async function fetchIssuesData(workspaceUri, userOverrideRepo, execFn = e
 
   const ghRepoArgs = ['-R', repoSlug];
 
-  // Fetch open issues labeled agent-ready, recent closed issues, and open PRs in parallel
-  const [openIssuesRes, closedIssuesRes, prsRes] = await Promise.all([
+  // Fetch open issues labeled agent-ready, recent closed issues, open PRs, and inline PR review comments in parallel
+  const [openIssuesRes, closedIssuesRes, prsRes, inlineCommentsRes] = await Promise.all([
     execFn('gh', [
       'issue',
       'list',
@@ -357,11 +369,35 @@ export async function fetchIssuesData(workspaceUri, userOverrideRepo, execFn = e
       '--json',
       'number,title,url,state,headRefName,isDraft,createdAt,comments,reviews',
     ], { maxBuffer: 15 * 1024 * 1024 }).then(({ stdout }) => JSON.parse(stdout || '[]')).catch(() => []),
+
+    execFn('gh', [
+      'api',
+      `repos/${repoSlug}/pulls/comments?per_page=100`,
+    ], { maxBuffer: 10 * 1024 * 1024 }).then(({ stdout }) => JSON.parse(stdout || '[]')).catch(() => []),
   ]);
 
   const prsByIssue = indexPullRequestsByIssue(prsRes);
+  const inlineCommentsByPr = new Map();
+  for (const comment of inlineCommentsRes) {
+    if (!comment) continue;
+    const prNum = comment.pull_request_url
+      ? parseInt(comment.pull_request_url.split('/').pop(), 10)
+      : (comment.pr_number || null);
+    if (prNum && !Number.isNaN(prNum)) {
+      if (!inlineCommentsByPr.has(prNum)) {
+        inlineCommentsByPr.set(prNum, []);
+      }
+      inlineCommentsByPr.get(prNum).push(comment);
+    }
+  }
+
   const allIssues = [...openIssuesRes, ...closedIssuesRes];
-  const items = allIssues.map((issue) => formatIssueItem(issue, prsByIssue.get(issue.number) || []));
+  const items = allIssues.map((issue) => {
+    const prs = prsByIssue.get(issue.number) || [];
+    const primaryPR = prs[0] || null;
+    const inlines = primaryPR ? (inlineCommentsByPr.get(primaryPR.number) || []) : [];
+    return formatIssueItem(issue, prs, inlines);
+  });
 
   return {
     needsTargetRepo: false,

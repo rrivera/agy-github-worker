@@ -201,6 +201,30 @@ describe('buildIssueTimeline', () => {
     assert.equal(timeline[3].state, 'CHANGES_REQUESTED');
   });
 
+  it('incorporates inline PR review comments chronologically', () => {
+    const issue = { comments: [] };
+    const primaryPR = {
+      comments: [
+        { author: { login: 'agent' }, body: '<!-- antigravity-agent: phase=review-ready -->', createdAt: '2026-11-01T10:00:00Z' },
+      ],
+      reviews: [],
+    };
+    const inlineComments = [
+      {
+        user: { login: 'human' },
+        body: 'Please clarify this line',
+        created_at: '2026-11-01T11:00:00Z',
+      },
+    ];
+
+    const timeline = buildIssueTimeline(issue, primaryPR, inlineComments);
+    assert.equal(timeline.length, 2);
+    assert.equal(timeline[0].body, '<!-- antigravity-agent: phase=review-ready -->');
+    assert.equal(timeline[1].source, 'pr_inline_comment');
+    assert.equal(timeline[1].author, 'human');
+    assert.equal(timeline[1].body, 'Please clarify this line');
+  });
+
   it('handles missing comments or primaryPR gracefully', () => {
     assert.deepEqual(buildIssueTimeline({}, null), []);
     assert.deepEqual(buildIssueTimeline({ comments: null }, undefined), []);
@@ -295,6 +319,42 @@ describe('formatIssueItem', () => {
     assert.deepEqual(item.labels, ['agent-ready', 'status:in-progress']);
     assert.equal(item.pullRequests.length, 1);
     assert.equal(item.pullRequests[0].number, 10);
+  });
+
+  it('marks issue actionable with USER_REPLIED when human leaves an inline review comment after agent event', () => {
+    const issue = {
+      number: 2,
+      title: 'Review ticket',
+      url: 'https://github.com/org/repo/issues/2',
+      body: 'Task',
+      labels: [{ name: 'agent-ready' }, { name: 'status:in-review' }],
+      createdAt: '2026-11-01T10:00:00Z',
+      comments: [
+        { author: { login: 'agent' }, body: '<!-- antigravity-agent: phase=review-ready -->', createdAt: '2026-11-01T11:00:00Z' },
+      ],
+    };
+    const prs = [
+      {
+        number: 20,
+        title: 'PR for #2',
+        url: 'https://github.com/org/repo/pull/20',
+        state: 'OPEN',
+        isDraft: false,
+      },
+    ];
+    const inlineComments = [
+      {
+        pull_request_url: 'https://api.github.com/repos/org/repo/pulls/20',
+        user: { login: 'human' },
+        body: 'Can you check this line?',
+        created_at: '2026-11-01T12:00:00Z',
+      },
+    ];
+
+    const item = formatIssueItem(issue, prs, inlineComments);
+    assert.equal(item.status, 'In Review');
+    assert.equal(item.action, 'USER_REPLIED');
+    assert.equal(item.actionable, true);
   });
 });
 
