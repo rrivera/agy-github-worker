@@ -55,10 +55,26 @@ When decomposing implementation inside `.worktrees/issue-<NUM>`, define and invo
    - Verify existing tests pass before making edits.
    - Write failing tests at public seams first (Red), implement minimal code or delegate subtasks to turn tests green (Green), and refactor with complete documentation comments following codebase conventions (Refactor).
    - Run all repository quality gates (tests, race detector, linter, typecheck, build).
-5. **Commit, Push & Open PR**:
+5. **Upstream Rebase, Conflict Resolution & Quality Gates**:
+   - Work exclusively inside `.worktrees/issue-<NUM>`.
+   - Check if `origin/main` has advanced ahead:
+     ```bash
+     git -C ".worktrees/issue-<NUM>" fetch origin main
+     BEHIND_COUNT=$(git -C ".worktrees/issue-<NUM>" rev-list --count HEAD..origin/main)
+     if [ "$BEHIND_COUNT" -gt 0 ]; then
+       if ! git -C ".worktrees/issue-<NUM>" rebase origin/main; then
+         CONFLICTS=$(git -C ".worktrees/issue-<NUM>" diff --name-only --diff-filter=U)
+         # Resolve conflicts cleanly preserving both base updates and feature logic
+         git -C ".worktrees/issue-<NUM>" add $CONFLICTS
+         git -C ".worktrees/issue-<NUM>" rebase --continue
+       fi
+     fi
+     ```
+   - Verify all tests, race detectors, linters, typecheckers, and builds pass.
+6. **Commit, Push & Open PR**:
    - Commit changes and push:
      ```bash
-     git push -u origin "feat/issue-<NUM>"
+     git -C ".worktrees/issue-<NUM>" push --force-with-lease -u origin "feat/issue-<NUM>"
      ```
    - Open the Pull Request (`Closes #<NUM>` + summary):
      ```bash
@@ -68,7 +84,7 @@ When decomposing implementation inside `.worktrees/issue-<NUM>`, define and invo
      ```
    - Return the PR number and head commit SHA to the orchestrator.
 
-### Path B: `USER_REPLIED` or Peer Review `REQUEST_CHANGES` (Iterative Update)
+### Path B: `USER_REPLIED`, `NEEDS_REVISION`, or Failing CI Checks (Iterative Update)
 
 1. **Ensure Issue is in `status:in-progress`**:
    If the issue is currently in `status:waiting-on-user` or `status:in-review`, transition its label back to `status:in-progress`.
@@ -85,12 +101,13 @@ When decomposing implementation inside `.worktrees/issue-<NUM>`, define and invo
      git worktree add ".worktrees/issue-<NUM>" -b "feat/issue-<NUM>" origin/main
    fi
    ```
-3. **Apply Delta Fixes & Re-Verify Quality Gates**:
-   - Address every human comment or peer review `REQUEST_CHANGES` item inside `.worktrees/issue-<NUM>`.
+3. **Upstream Rebase, Delta Fixes & Re-Verify Quality Gates**:
+   - Fetch `origin/main` and rebase onto latest main, resolving any merge conflicts.
+   - Address every human comment, peer review `REQUEST_CHANGES` item, or CI failure inside `.worktrees/issue-<NUM>`.
    - Add or update regression tests covering the requested changes.
    - Re-run all mandatory quality gates until clean.
 4. **Commit, Push & Reply (Skip `gh pr create` if PR Exists)**:
-   - Commit the delta changes and push to `origin feat/issue-<NUM>`.
+   - Commit the delta changes and push with lease: `git -C ".worktrees/issue-<NUM>" push --force-with-lease origin "feat/issue-<NUM>"`.
    - Check if an open PR already exists for `feat/issue-<NUM>`:
      ```bash
      EXISTING_PR=$(gh pr list -R "$REPO" --head "feat/issue-<NUM>" --state open --json number -q '.[0].number // empty')

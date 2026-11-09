@@ -14,10 +14,11 @@ Use this reference when defining and invoking the 3 isolated peer reviewer subag
    PR: #<PR_NUM>
    Reasoning-Level: <medium | high>
    ```
-3. **Inspect PR Context**:
+3. **Inspect PR Context & CI Status**:
    ```bash
    gh issue view <ISSUE_NUM> -R "$REPO" --json title,body,comments
-   gh pr view <PR_NUM> -R "$REPO" --json title,body,files,additions,deletions
+   gh pr view <PR_NUM> -R "$REPO" --json title,body,files,additions,deletions,mergeable,mergeStateStatus
+   gh pr checks <PR_NUM> -R "$REPO" 2>/dev/null || true
    gh pr diff <PR_NUM> -R "$REPO"
    ```
 

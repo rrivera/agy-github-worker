@@ -9,7 +9,7 @@ Polls a GitHub repository's open `agent-ready` issues via `gh` CLI, dispatches p
 
 ---
 
-## 1. Prerequisites & Target Repository Resolution
+## 1. Prerequisites, Rate-Limit Resilience & Scoped Invocation
 
 1. **GitHub CLI (`gh`)**: Verify `gh auth status` succeeds with `repo` scope.
 2. **Target Repository (`REPO`)**:
@@ -19,6 +19,42 @@ Polls a GitHub repository's open `agent-ready` issues via `gh` CLI, dispatches p
      ```
    - If run outside a git repository (or if `gh repo view` fails), **ask the user** for the target repository (`OWNER/REPO`) and local clone path before proceeding.
    - Pass `-R "$REPO"` to all `gh` commands.
+3. **Rate-Limit Resilience & Exponential Backoff**:
+   - Inspect API quota before launching batch subagent operations:
+     ```bash
+     RATE_REMAINING=$(gh api rate_limit --jq '.rate.remaining' 2>/dev/null || echo "100")
+     if [ "$RATE_REMAINING" -lt 20 ]; then
+       RESET_TIME=$(gh api rate_limit --jq '.rate.reset | todate' 2>/dev/null)
+       echo "Warning: GitHub API rate limit low ($RATE_REMAINING remaining, resets at $RESET_TIME). Throttling..." >&2
+     fi
+     ```
+   - Wrap repeated or mutation commands with exponential backoff and jitter (`gh_retry`) to handle secondary rate limits (HTTP 403 / 429) defensively:
+     ```bash
+     gh_retry() {
+       local max_attempts=5
+       local delay=2
+       local attempt=1
+       while true; do
+         "$@" && return 0
+         local exit_code=$?
+         if [ $attempt -ge $max_attempts ]; then
+           echo "Error: gh command failed after $max_attempts attempts: $*" >&2
+           return $exit_code
+         fi
+         local jitter=$(( (RANDOM % 1000) / 1000 ))
+         echo "Warning: gh command failed (attempt $attempt/$max_attempts). Retrying in $((delay + jitter))s..." >&2
+         sleep $((delay + jitter))
+         delay=$((delay * 2))
+         attempt=$((attempt + 1))
+       done
+     }
+     ```
+4. **Scoped / Targeted Invocation Detection**:
+   The user may invoke the worker with explicit scope arguments in their prompt:
+   - **Specific Issues**: e.g., `/github-worker #12`, `/github-worker 12, 15`, `"work on issue #12"`. Parse out issue numbers: `TARGET_ISSUES=(12 15)`.
+   - **Target Milestone**: e.g., `/github-worker --milestone "v1.0"`, `"focus on v1.0 milestone"`. Parse: `TARGET_MILESTONE="v1.0"`.
+   - **Target Extra Label**: e.g., `/github-worker --label priority:high`, `"triage high-priority issues"`. Parse: `TARGET_LABEL="priority:high"`.
+   - If no scoping arguments are provided, default to polling **all** open `agent-ready` issues.
 
 ---
 
@@ -49,103 +85,46 @@ gh issue edit <NUM> -R "$REPO" \
 
 ## 3. Polling & Classifying Actionable Issues (Merged Issue + PR Timeline `jq` Filter)
 
-Fetch open `agent-ready` issues, open PRs, and inline PR review comments, then run this single `jq` filter to merge issue comments, PR issue-thread comments, inline PR diff comments, and PR reviews into one chronological timeline by timestamp (`createdAt` / `submittedAt` / `created_at`) and classify each issue:
+Fetch open `agent-ready` issues (applying any scoped flags like target issues, `--milestone`, or extra `--label`), open PRs, and inline PR review comments, then run this single `jq` filter to merge issue comments, PR issue-thread comments, inline PR diff comments, and PR reviews into one chronological timeline by timestamp (`createdAt` / `submittedAt` / `created_at`) and classify each issue:
 
 ```bash
-ISSUES_JSON=$(gh issue list -R "$REPO" --state open --label "agent-ready" --limit 100 \
-  --json number,title,url,body,labels,comments)
-PRS_JSON=$(gh pr list -R "$REPO" --state open --limit 100 \
-  --json number,headRefName,url,comments,reviews)
-INLINE_COMMENTS_JSON=$(gh api "repos/$REPO/pulls/comments?per_page=100" 2>/dev/null || echo "[]")
+# Build scoping flags based on user invocation arguments:
+EXTRA_LABEL_ARGS=()
+if [ -n "$TARGET_LABEL" ]; then
+  EXTRA_LABEL_ARGS+=(--label "$TARGET_LABEL")
+fi
 
-jq -n --argjson issues "$ISSUES_JSON" --argjson prs "$PRS_JSON" --argjson inlines "$INLINE_COMMENTS_JSON" '
-  $issues | map(
-    . as $issue |
-    ("feat/issue-" + ($issue.number | tostring)) as $branch |
-    ($prs | map(select(.headRefName == $branch)) | .[0] // null) as $pr |
-    ($issue.labels | map(.name)) as $labels |
-    (
-      if ($labels | index("status:done")) then "Done"
-      elif ($labels | index("status:in-review")) then "In Review"
-      elif ($labels | index("status:in-progress")) then "In Progress"
-      elif ($labels | index("status:waiting-on-user")) then "Waiting on User"
-      else "Todo"
-      end
-    ) as $status |
-    select($status != "Done") |
-    (
-      [
-        ($issue.comments // [] | map({
-          source: "issue_comment",
-          author: .author.login,
-          body: (.body // ""),
-          timestamp: .createdAt
-        })),
-        ($pr.comments // [] | map({
-          source: "pr_comment",
-          author: .author.login,
-          body: (.body // ""),
-          timestamp: .createdAt
-        })),
-        ($inlines // [] | map(
-          select($pr != null and ((.pull_request_url // "") | endswith("/" + ($pr.number | tostring)))) | {
-            source: "pr_inline_comment",
-            author: .user.login,
-            body: (.body // ""),
-            timestamp: .created_at
-          }
-        )),
-        ($pr.reviews // [] | map(select((.body // "") != "" or .state == "APPROVED" or .state == "CHANGES_REQUESTED") | {
-          source: "pr_review",
-          author: .author.login,
-          state: .state,
-          body: (.body // ""),
-          timestamp: (.submittedAt // .createdAt)
-        }))
-      ]
-      | flatten
-      | map(select(.timestamp != null))
-      | sort_by(.timestamp)
-      | map(. + {
-          is_agent: (.body | contains("<!-- antigravity-agent:")),
-          requests_changes: (
-            (.body | contains("<!-- antigravity-agent:")) and
-            ((.body | contains("verdict=REQUEST_CHANGES")) or (.body | contains("Verdict: REQUEST_CHANGES")) or (.state == "CHANGES_REQUESTED"))
-          )
-        })
-    ) as $timeline |
-    ($timeline | map(.is_agent) | rindex(true)) as $last_agent_idx |
-    (if $last_agent_idx == null then null else $timeline[$last_agent_idx] end) as $last_agent_event |
-    (if $last_agent_idx == null then $timeline else $timeline[($last_agent_idx + 1):] end | map(select(.is_agent | not))) as $latest_human |
-    (
-      if $status == "Todo" then
-        if $last_agent_idx == null then "NEEDS_PLAN"
-        elif ($latest_human | length) > 0 then "USER_REPLIED"
-        else "WAITING_ON_USER"
-        end
-      elif ($latest_human | length) > 0 then "USER_REPLIED"
-      elif ($status == "In Progress" and $last_agent_idx == null) then "NEEDS_PLAN"
-      elif ($status == "In Progress" and ($last_agent_event.requests_changes // false)) then "NEEDS_REVISION"
-      else "WAITING_ON_USER"
-      end
-    ) as $action |
-    {
-      issue_number: $issue.number,
-      title: $issue.title,
-      url: $issue.url,
-      body: $issue.body,
-      status: $status,
-      labels: $labels,
-      pr_number: ($pr.number // null),
-      actionable: ($action != "WAITING_ON_USER"),
-      action: $action,
-      latest_human_comments: $latest_human
-    }
-  )
-'
+MILESTONE_ARGS=()
+if [ -n "$TARGET_MILESTONE" ]; then
+  MILESTONE_ARGS+=(--milestone "$TARGET_MILESTONE")
+fi
+
+# Fetch issues with retry
+ISSUES_JSON=$(gh_retry gh issue list -R "$REPO" --state open --label "agent-ready" \
+  "${EXTRA_LABEL_ARGS[@]}" "${MILESTONE_ARGS[@]}" --limit 100 \
+  --json number,title,url,body,labels,comments)
+
+# If specific issues were targeted by number, verify opt-in and filter:
+# Example: TARGET_ISSUES_JSON='[12, 15]' or '[]' for all
+TARGET_ISSUES_JSON="${TARGET_ISSUES_JSON:-[]}"
+
+PRS_JSON=$(gh_retry gh pr list -R "$REPO" --state open --limit 100 \
+  --json number,headRefName,url,comments,reviews)
+INLINE_COMMENTS_JSON=$(gh_retry gh api "repos/$REPO/pulls/comments?per_page=100" 2>/dev/null || echo "[]")
+
+# Run timeline aggregation and issue classification filter
+# (Uses canonical filter in references/timeline-filter.jq)
+ACTIONABLE_ISSUES_JSON=$(jq -n \
+  --argjson issues "$ISSUES_JSON" \
+  --argjson prs "$PRS_JSON" \
+  --argjson inlines "$INLINE_COMMENTS_JSON" \
+  --argjson targets "$TARGET_ISSUES_JSON" \
+  -f "${SKILL_DIR:-skills/github-worker}/references/timeline-filter.jq")
 ```
 
-- If **no issues have `actionable: true`**: Report `"Repository is idle (no actionable agent-ready issues)"` and stop.
+- If **no issues have `actionable: true`**:
+  - If specific issue numbers were targeted (e.g. `#12`), verify if the issue exists and whether it lacks `agent-ready`. If the user explicitly requested to work on that issue, apply `agent-ready` (`gh issue edit <NUM> -R "$REPO" --add-label "agent-ready"`) and rerun polling.
+  - Otherwise, report `"Repository is idle (no actionable agent-ready issues)"` and stop.
 - If **1 or more issues have `actionable: true`**: Proceed immediately to **Section 4** and **spawn dedicated `architect` subagents for all actionable issues in parallel**.
 
 ---
@@ -190,30 +169,71 @@ Follow the full contract in [`references/architect-prompt.md`](references/archit
 
 ### Flow A: `NEEDS_PLAN` (Fresh Ticket)
 1. **Transition Label**: Set `status:in-progress` on `<NUM>` (Section 2).
-2. **Investigate & Post Plan**: Read issue and codebase in read-only mode, author `<PLAN_MD>` (architecture, public testing seams, table-driven tests, subtask delegation plan, and `<!-- antigravity-agent: phase=plan-proposed -->`), and post via `gh issue comment <NUM> -R "$REPO" --body-file <PLAN_MD>`. Proceed immediately to implementation.
+2. **Investigate & Post Plan**: Read issue and codebase in read-only mode, author `<PLAN_MD>` (architecture, public testing seams, table-driven tests, subtask delegation plan, and `<!-- antigravity-agent: phase=plan-proposed -->`), and post via `gh_retry gh issue comment <NUM> -R "$REPO" --body-file <PLAN_MD>`. Proceed immediately to implementation.
 3. **Create Isolated Worktree**:
    ```bash
    git fetch origin main
    git worktree add .worktrees/issue-<NUM> -b "feat/issue-<NUM>" origin/main
    ```
 4. **TDD & Worker Delegation**: Write failing tests at public seams first (Red), implement or delegate subtasks to complexity-matched worker subagents (Green), and refactor with complete codebase-idiomatic doc comments (Refactor).
-5. **Mandatory Quality Gates**: Inspect repository config (`Makefile`, `package.json`, `go.mod`, `pyproject.toml`, `Cargo.toml`, `.github/workflows/`) and pass all tests, race detectors, linters, typecheckers, and builds before committing.
-6. **Commit, Push & Create PR**: Commit changes, `git push -u origin "feat/issue-<NUM>"`, and create the PR via `gh pr create -R "$REPO" --base main --head "feat/issue-<NUM>" --title "feat: <title> (#<NUM>)" --body-file <PR_BODY_MD>`.
+5. **Upstream Rebase, Conflict Resolution & Mandatory Quality Gates**:
+   - Check if `origin/main` has moved ahead while working:
+     ```bash
+     git -C ".worktrees/issue-<NUM>" fetch origin main
+     BEHIND_COUNT=$(git -C ".worktrees/issue-<NUM>" rev-list --count HEAD..origin/main)
+     if [ "$BEHIND_COUNT" -gt 0 ]; then
+       echo "origin/main advanced by $BEHIND_COUNT commit(s). Rebasing feat/issue-<NUM>..."
+       if ! git -C ".worktrees/issue-<NUM>" rebase origin/main; then
+         echo "Conflicts detected during rebase. Inspecting unmerged files..."
+         CONFLICTS=$(git -C ".worktrees/issue-<NUM>" diff --name-only --diff-filter=U)
+         # Resolve conflicts cleanly preserving base changes and feature requirements
+         git -C ".worktrees/issue-<NUM>" add $CONFLICTS
+         git -C ".worktrees/issue-<NUM>" rebase --continue
+       fi
+     fi
+     ```
+   - Inspect repository config (`Makefile`, `package.json`, `go.mod`, `pyproject.toml`, `Cargo.toml`, `.github/workflows/`) and pass all tests, race detectors, linters, typecheckers, and builds before committing.
+6. **Commit, Push & Create PR**: Commit changes, `git -C ".worktrees/issue-<NUM>" push --force-with-lease -u origin "feat/issue-<NUM>"`, and create the PR via `gh_retry gh pr create -R "$REPO" --base main --head "feat/issue-<NUM>" --title "feat: <title> (#<NUM>)" --body-file <PR_BODY_MD>`.
 
 ### Flow B: `USER_REPLIED` or `NEEDS_REVISION` (Existing Worktree / Open PR)
 1. **Transition Label**: Ensure `<NUM>` is labeled `status:in-progress`.
 2. **Reuse or Reattach Worktree (Do Not Run `git worktree add -b`)**:
    - If `.worktrees/issue-<NUM>` exists, check out `feat/issue-<NUM>` and fast-forward pull from `origin`.
    - If `.worktrees/issue-<NUM>` was removed but `origin/feat/issue-<NUM>` exists, run `git worktree add ".worktrees/issue-<NUM>" -B "feat/issue-<NUM>" "origin/feat/issue-<NUM>"`.
-3. **Apply Delta Fixes & Re-Verify Quality Gates**:
-   - Address every human comment or peer review finding in `.worktrees/issue-<NUM>`, add regression tests, and re-run all quality gates.
+3. **Upstream Rebase, Delta Fixes & Re-Verify Quality Gates**:
+   - Fetch `origin/main` and rebase onto latest main, resolving any conflicts cleanly.
+   - Address every human comment, peer review finding, or CI failure in `.worktrees/issue-<NUM>`, add regression tests, and re-run all quality gates.
 4. **Commit, Push & Update Without `gh pr create`**:
-   - Commit changes and `git push origin "feat/issue-<NUM>"`.
+   - Commit changes and push with lease: `git -C ".worktrees/issue-<NUM>" push --force-with-lease origin "feat/issue-<NUM>"`.
    - If an open PR already exists for `feat/issue-<NUM>`, do **not** run `gh pr create`; post a concise update comment ending with `<!-- antigravity-agent: phase=in-progress -->`.
 
 ---
 
-## 7. Automated 3-Axis Peer Review Loop & Merge Completion (`status:done`)
+## 7. CI Gating, 3-Axis Peer Review Loop & Merge Completion (`status:done`)
+
+### Step 7.0: CI / GitHub Actions Check Gating (Prior to Reviewer Dispatch)
+
+Before dispatching peer review subagents, verify whether the repository has active GitHub Actions workflows:
+
+```bash
+WORKFLOW_COUNT=$(gh workflow list -R "$REPO" --json id -q 'length' 2>/dev/null || echo "0")
+
+if [ "$WORKFLOW_COUNT" -gt 0 ]; then
+  echo "GitHub Actions detected ($WORKFLOW_COUNT workflows). Watching CI checks for PR #<PR_NUM>..."
+  if ! gh pr checks "<PR_NUM>" -R "$REPO" --watch; then
+    echo "CI checks failed on PR #<PR_NUM>. Capturing failure logs..."
+    FAILING_RUN_ID=$(gh run list -R "$REPO" --branch "feat/issue-<NUM>" --status failure --json databaseId -q '.[0].databaseId // empty')
+    if [ -n "$FAILING_RUN_ID" ]; then
+      gh run view "$FAILING_RUN_ID" -R "$REPO" --log-failed | tail -n 120
+    fi
+    # Do NOT dispatch peer reviewers yet. Route failure back to architect subagent as Flow B (NEEDS_REVISION) to fix.
+  else
+    echo "All GitHub Actions checks PASSED on PR #<PR_NUM>. Proceeding to peer review dispatch."
+  fi
+fi
+```
+
+If CI checks fail, pause reviewer dispatch and trigger the `architect` subagent to fix the failing tests or linter checks in `.worktrees/issue-<NUM>`, push, and wait for green checks. Once green (or if no CI workflows are configured), proceed to the peer review loop below:
 
 Before spawning the 3 reviewer subagents on an open PR, check whether the task complexity tier is specified in the issue description. Otherwise, classify complexity using:
 ```bash

@@ -15,11 +15,14 @@ Core Antigravity plugin providing the autonomous `/github-worker` skill for agen
 
 `agy-github-worker` is a fully autonomous issue worker engine built specifically for Antigravity:
 
-- **Autonomous Issue Polling**: Scans target repositories for issues opted in via the `agent-ready` label.
+- **Autonomous Issue Polling & Scoped Targeting**: Scans target repositories for issues opted in via `agent-ready`. Supports running on all issues or targeting specific tickets (`/github-worker #12`), milestones (`--milestone v1.0`), and extra labels (`--label priority:high`).
 - **Workflow State Management**: Manages state progression through labels (`status:todo`, `status:in-progress`, `status:waiting-on-user`, `status:in-review`, `status:done`).
 - **Parallel Subagent Dispatch**: Spawns isolated `architect` subagents in dedicated git worktrees (`.worktrees/issue-<number>`), isolating builds and tests.
+- **Auto-Rebase & Conflict Resolution**: Automatically fetches upstream `main`, detects if `main` advanced ahead, rebases cleanly, and resolves merge conflicts before testing and PR submission.
 - **TDD Quality Gate**: Enforces Test-Driven Development (Red -> Green -> Refactor) and empirical verification before opening Pull Requests.
+- **CI / GitHub Actions Gating**: Automatically watches PR status checks on repositories with active GitHub Actions workflows, ensuring all CI tests pass before dispatching peer reviewers.
 - **3-Axis Peer Code Review**: Automatically dispatches parallel read-only review subagents (`spec-reviewer`, `standards-reviewer`, `security-reviewer`) to evaluate changes against observable predicates.
+- **Rate-Limit Resilience**: Incorporates defensive exponential backoff, jitter, and quota monitoring against GitHub API rate limits.
 - **Manual Merge Safety**: Keeps approved PRs in `status:in-review` for human approval by default, with per-conversation opt-in for automated squash-merging.
 
 ---
@@ -75,14 +78,24 @@ Restart Antigravity. The `/github-worker` slash command will be available across
 
 ## Usage
 
-In any Antigravity conversation within a Git repository:
-
+### 1. Default Run (Poll All Actionable `agent-ready` Issues)
 ```text
 /github-worker
 ```
 
-To enable automatic merging for a specific session:
+### 2. Targeted Issue Run
+```text
+/github-worker #12
+/github-worker 12, 15
+```
 
+### 3. Milestone or Label Filtered Run
+```text
+/github-worker --milestone "v1.0"
+/github-worker --label priority:high
+```
+
+### 4. Enable Automatic Merging for a Specific Session
 ```text
 /github-worker Pull the issues. Proceed to merge them and mark as done without my review.
 ```
