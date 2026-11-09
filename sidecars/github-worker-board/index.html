@@ -35,12 +35,6 @@
         <div class="search-box">
           <input type="text" id="filter-input" placeholder="Filter issues or PRs..." autocomplete="off" />
         </div>
-        <div class="toolbar-toggles">
-          <label class="toggle-label" title="Hide completed items in Done column">
-            <input type="checkbox" id="hide-done-checkbox" />
-            <span>Hide Done</span>
-          </label>
-        </div>
       </div>
       <div id="status-bar" class="status-bar">
         <span id="last-updated-text">Loading issues...</span>
@@ -65,11 +59,12 @@
       </div>
     </div>
 
-    <!-- Board Columns View -->
-    <main id="columns-container" class="columns-container">
+    <!-- Stacked Horizontal Cards View -->
+    <main id="cards-container" class="cards-container">
       <div class="skeleton-loader">
-        <div class="skeleton-column"></div>
-        <div class="skeleton-column"></div>
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
       </div>
     </main>
   </div>

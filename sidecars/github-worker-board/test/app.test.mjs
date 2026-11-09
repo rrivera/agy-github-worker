@@ -1,12 +1,28 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  boardState,
+  COLUMN_COLORS,
   escapeHtml,
   capitalize,
   filterItems,
   groupItemsByStatus,
   createCardElement,
+  renderBoard,
 } from '../app.js';
+
+describe('boardState', () => {
+  it('does not contain hideDone property', () => {
+    assert.equal('hideDone' in boardState, false);
+  });
+});
+
+describe('COLUMN_COLORS', () => {
+  it('does not define colors for removed Done status', () => {
+    assert.equal('Done' in COLUMN_COLORS, false);
+    assert.equal('done' in COLUMN_COLORS, false);
+  });
+});
 
 describe('escapeHtml', () => {
   it('escapes &, <, >, ", and single quote', () => {
@@ -105,21 +121,24 @@ describe('groupItemsByStatus', () => {
   const columns = [
     { id: 'todo', name: 'Todo' },
     { id: 'in_progress', name: 'In Progress' },
-    { id: 'done', name: 'Done' },
+    { id: 'waiting', name: 'Waiting on User' },
+    { id: 'in_review', name: 'In Review' },
   ];
 
   const items = [
     { id: '1', number: 1, status: 'Todo' },
     { id: '2', number: 2, status: 'In Progress' },
-    { id: '3', number: 3, status: 'Done' },
-    { id: '4', number: 4, status: 'Unknown' },
+    { id: '3', number: 3, status: 'In Review' },
+    { id: '4', number: 4, status: 'Waiting on User' },
+    { id: '5', number: 5, status: 'Unknown' },
   ];
 
-  it('groups items into columns according to status', () => {
+  it('groups items into sections according to status', () => {
     const grouped = groupItemsByStatus(columns, items);
     assert.equal(grouped.get('Todo')?.length, 1);
     assert.equal(grouped.get('In Progress')?.length, 1);
-    assert.equal(grouped.get('Done')?.length, 1);
+    assert.equal(grouped.get('In Review')?.length, 1);
+    assert.equal(grouped.get('Waiting on User')?.length, 1);
     assert.equal(grouped.get('Unknown')?.length, 1);
   });
 
@@ -127,7 +146,8 @@ describe('groupItemsByStatus', () => {
     const emptyItemsGrouped = groupItemsByStatus(columns, []);
     assert.equal(emptyItemsGrouped.get('Todo')?.length, 0);
     assert.equal(emptyItemsGrouped.get('In Progress')?.length, 0);
-    assert.equal(emptyItemsGrouped.get('Done')?.length, 0);
+    assert.equal(emptyItemsGrouped.get('Waiting on User')?.length, 0);
+    assert.equal(emptyItemsGrouped.get('In Review')?.length, 0);
   });
 });
 
@@ -211,5 +231,61 @@ describe('createCardElement', () => {
     const card = createCardElement(item, doc);
     assert.equal(card.className, 'card');
     assert.equal(card.children.length, 2); // cardTop and cardTitle (no PRs container)
+  });
+});
+
+describe('renderBoard', () => {
+  it('renders stacked horizontal card sections into cards-container', () => {
+    const mockElements = {
+      'board-title': { textContent: '' },
+      'repo-badge': { style: {}, textContent: '', title: '' },
+      'cards-container': {
+        innerHTML: '',
+        children: [],
+        appendChild(child) { this.children.push(child); return child; },
+      },
+    };
+    const origDoc = globalThis.document;
+    try {
+      globalThis.document = {
+        getElementById(id) { return mockElements[id] || null; },
+        createElement(tag) {
+          return {
+            tagName: tag.toUpperCase(),
+            className: '',
+            style: {},
+            attributes: {},
+            children: [],
+            textContent: '',
+            innerHTML: '',
+            setAttribute(name, val) { this.attributes[name] = val; },
+            appendChild(child) { this.children.push(child); return child; },
+            addEventListener() {},
+          };
+        },
+      };
+
+      boardState.repository = { slug: 'owner/repo', source: 'git' };
+      boardState.columns = [
+        { id: 'todo', name: 'Todo', color: '#89b4fa' },
+        { id: 'in_progress', name: 'In Progress', color: '#fab387' },
+      ];
+      boardState.items = [
+        { number: 1, title: 'Issue 1', status: 'Todo', action: 'NEEDS_PLAN', actionable: true, pullRequests: [] },
+      ];
+      boardState.filterQuery = '';
+
+      renderBoard();
+
+      assert.equal(mockElements['board-title'].textContent, 'GitHub Worker Board');
+      assert.equal(mockElements['repo-badge'].textContent, 'owner/repo');
+      assert.equal(mockElements['cards-container'].children.length, 2); // 2 sections
+
+      const todoSection = mockElements['cards-container'].children[0];
+      assert.match(todoSection.className, /board-section/);
+      assert.equal(todoSection.children.length, 2); // header, cards body
+    } finally {
+      globalThis.document = origDoc;
+    }
   });
 });

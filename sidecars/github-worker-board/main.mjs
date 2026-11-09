@@ -9,14 +9,13 @@ const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /**
- * Default Kanban columns configured for issue workflow.
+ * Default columns configured for active issue workflow.
  */
 export const COLUMNS = [
   { id: 'todo', name: 'Todo', color: '#89b4fa' },
   { id: 'in_progress', name: 'In Progress', color: '#fab387' },
   { id: 'waiting', name: 'Waiting on User', color: '#f9e2af' },
   { id: 'in_review', name: 'In Review', color: '#cba6f7' },
-  { id: 'done', name: 'Done', color: '#a6e3a1' },
 ];
 
 /**
@@ -328,8 +327,8 @@ export async function fetchIssuesData(workspaceUri, userOverrideRepo, execFn = e
 
   const ghRepoArgs = ['-R', repoSlug];
 
-  // Fetch open issues labeled agent-ready, recent closed issues, open PRs, and inline PR review comments in parallel
-  const [openIssuesRes, closedIssuesRes, prsRes, inlineCommentsRes] = await Promise.all([
+  // Fetch open issues labeled agent-ready, PRs, and inline PR review comments in parallel
+  const [openIssuesRes, prsRes, inlineCommentsRes] = await Promise.all([
     execFn('gh', [
       'issue',
       'list',
@@ -343,20 +342,6 @@ export async function fetchIssuesData(workspaceUri, userOverrideRepo, execFn = e
       '--json',
       'number,title,url,body,labels,createdAt,updatedAt,comments',
     ], { maxBuffer: 15 * 1024 * 1024 }).then(({ stdout }) => JSON.parse(stdout || '[]')),
-
-    execFn('gh', [
-      'issue',
-      'list',
-      ...ghRepoArgs,
-      '--state',
-      'closed',
-      '--label',
-      'agent-ready',
-      '--limit',
-      '30',
-      '--json',
-      'number,title,url,body,labels,createdAt,updatedAt,closedAt',
-    ], { maxBuffer: 10 * 1024 * 1024 }).then(({ stdout }) => JSON.parse(stdout || '[]')).catch(() => []),
 
     execFn('gh', [
       'pr',
@@ -391,13 +376,24 @@ export async function fetchIssuesData(workspaceUri, userOverrideRepo, execFn = e
     }
   }
 
-  const allIssues = [...openIssuesRes, ...closedIssuesRes];
-  const items = allIssues.map((issue) => {
-    const prs = prsByIssue.get(issue.number) || [];
-    const primaryPR = prs[0] || null;
-    const inlines = primaryPR ? (inlineCommentsByPr.get(primaryPR.number) || []) : [];
-    return formatIssueItem(issue, prs, inlines);
+  // Filter out any completed issues (closed or labeled status:done)
+  const activeIssues = (Array.isArray(openIssuesRes) ? openIssuesRes : []).filter((issue) => {
+    if (!issue) return false;
+    const isClosed = Boolean(issue.closedAt || issue.state === 'CLOSED');
+    if (isClosed) return false;
+    const labels = Array.isArray(issue.labels) ? issue.labels : [];
+    const labelNames = labels.map((l) => (typeof l === 'string' ? l : l?.name || ''));
+    return !labelNames.includes('status:done');
   });
+
+  const items = activeIssues
+    .map((issue) => {
+      const prs = prsByIssue.get(issue.number) || [];
+      const primaryPR = prs[0] || null;
+      const inlines = primaryPR ? (inlineCommentsByPr.get(primaryPR.number) || []) : [];
+      return formatIssueItem(issue, prs, inlines);
+    })
+    .filter((item) => item.status !== 'Done');
 
   return {
     needsTargetRepo: false,
