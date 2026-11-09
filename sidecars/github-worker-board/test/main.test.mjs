@@ -11,6 +11,15 @@ import {
   fetchIssuesData,
 } from '../main.mjs';
 
+describe('COLUMNS', () => {
+  it('contains only active workflow statuses and excludes Done', () => {
+    const columnIds = COLUMNS.map((c) => c.id);
+    assert.deepEqual(columnIds, ['todo', 'in_progress', 'waiting', 'in_review']);
+    assert.equal(COLUMNS.some((c) => c.id === 'done'), false);
+    assert.equal(COLUMNS.some((c) => c.name.toLowerCase() === 'done'), false);
+  });
+});
+
 describe('resolveRepoTarget', () => {
   it('resolves repository from user override when valid slug is provided', async () => {
     const res = await resolveRepoTarget('', ' facebook/react ');
@@ -370,8 +379,12 @@ describe('fetchIssuesData', () => {
     assert.deepEqual(res.items, []);
   });
 
-  it('fetches and formats open/closed issues and PRs when target is resolved', async () => {
+  it('fetches open issues and PRs without querying closed issues', async () => {
+    let queriedClosedIssues = false;
     const mockExec = async (cmd, args) => {
+      if (args.includes('closed')) {
+        queriedClosedIssues = true;
+      }
       if (args.includes('issue') && args.includes('open')) {
         return {
           stdout: JSON.stringify([
@@ -386,9 +399,6 @@ describe('fetchIssuesData', () => {
             },
           ]),
         };
-      }
-      if (args.includes('issue') && args.includes('closed')) {
-        return { stdout: '[]' };
       }
       if (args.includes('pr')) {
         return {
@@ -412,9 +422,66 @@ describe('fetchIssuesData', () => {
     const res = await fetchIssuesData('', 'owner/repo', mockExec);
     assert.equal(res.needsTargetRepo, false);
     assert.equal(res.repository.slug, 'owner/repo');
+    assert.equal(queriedClosedIssues, false, 'Should not query closed issues from GitHub');
     assert.equal(res.items.length, 1);
     assert.equal(res.items[0].number, 1);
     assert.equal(res.items[0].pullRequests.length, 1);
     assert.equal(res.items[0].pullRequests[0].number, 10);
+  });
+
+  it('discards completed issues (status:done label or closed state)', async () => {
+    const mockExec = async (cmd, args) => {
+      if (args.includes('issue') && args.includes('open')) {
+        return {
+          stdout: JSON.stringify([
+            {
+              number: 1,
+              title: 'Active Issue',
+              url: 'https://github.com/owner/repo/issues/1',
+              body: 'Active issue body',
+              labels: ['agent-ready', 'status:in-progress'],
+              createdAt: '2026-11-01T00:00:00Z',
+              comments: [],
+            },
+            {
+              number: 2,
+              title: 'Done Label Issue',
+              url: 'https://github.com/owner/repo/issues/2',
+              body: 'Completed with label',
+              labels: ['agent-ready', 'status:done'],
+              createdAt: '2026-11-01T00:00:00Z',
+              comments: [],
+            },
+            {
+              number: 3,
+              title: 'Closed State Issue',
+              url: 'https://github.com/owner/repo/issues/3',
+              body: 'Closed issue',
+              state: 'CLOSED',
+              labels: ['agent-ready'],
+              createdAt: '2026-11-01T00:00:00Z',
+              comments: [],
+            },
+            {
+              number: 4,
+              title: 'Issue With closedAt',
+              url: 'https://github.com/owner/repo/issues/4',
+              body: 'Issue with closedAt date',
+              closedAt: '2026-11-02T00:00:00Z',
+              labels: ['agent-ready'],
+              createdAt: '2026-11-01T00:00:00Z',
+              comments: [],
+            },
+          ]),
+        };
+      }
+      return { stdout: '[]' };
+    };
+
+    const res = await fetchIssuesData('', 'owner/repo', mockExec);
+    assert.equal(res.items.length, 1);
+    assert.equal(res.items[0].number, 1);
+    assert.equal(res.items[0].title, 'Active Issue');
+    assert.equal(res.items.some((i) => i.status === 'Done'), false);
   });
 });

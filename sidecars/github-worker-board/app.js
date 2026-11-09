@@ -8,7 +8,6 @@ export const boardState = {
   activeWorkspaceUri: null,
   userOverrideRepo: '',
   filterQuery: '',
-  hideDone: false,
   isRefreshing: false,
 };
 
@@ -19,7 +18,6 @@ export const COLUMN_COLORS = {
   'Waiting on User': 'var(--status-waiting)',
   'In review': 'var(--status-in-review)',
   'In Review': 'var(--status-in-review)',
-  'Done': 'var(--status-done)',
 };
 
 /**
@@ -300,15 +298,15 @@ export async function loadBoard() {
 }
 
 /**
- * Renders the board columns and cards into the DOM.
+ * Renders the stacked horizontal cards grouped cleanly by status into the DOM.
  */
 export function renderBoard() {
   if (typeof document === 'undefined') return;
 
   const boardTitleEl = document.getElementById('board-title');
   const repoBadgeEl = document.getElementById('repo-badge');
-  const columnsContainer = document.getElementById('columns-container');
-  if (!columnsContainer) return;
+  const cardsContainer = document.getElementById('cards-container') || document.getElementById('columns-container');
+  if (!cardsContainer) return;
 
   if (boardState.repository && boardState.repository.slug) {
     if (boardTitleEl) boardTitleEl.textContent = 'GitHub Worker Board';
@@ -324,44 +322,39 @@ export function renderBoard() {
   const filteredItems = filterItems(boardState.items, boardState.filterQuery);
   const itemsByStatus = groupItemsByStatus(boardState.columns, filteredItems);
 
-  columnsContainer.innerHTML = '';
+  cardsContainer.innerHTML = '';
 
   for (const col of boardState.columns) {
-    const isDone = col.name?.toLowerCase() === 'done';
-    if (isDone && boardState.hideDone) {
-      continue;
-    }
-
     const itemsInCol = itemsByStatus.get(col.name) || [];
     const colColor = col.color || COLUMN_COLORS[col.name] || 'var(--primary-color)';
 
-    const colEl = document.createElement('div');
-    colEl.className = 'column';
-    colEl.setAttribute('data-col-id', col.id);
+    const sectionEl = document.createElement('div');
+    sectionEl.className = 'board-section column';
+    sectionEl.setAttribute('data-col-id', col.id);
 
-    // Column Header
-    const colHeader = document.createElement('div');
-    colHeader.className = 'column-header';
-    colHeader.innerHTML = `
-      <div class="column-header-title">
-        <span class="column-dot" style="background-color: ${escapeHtml(colColor)};"></span>
+    // Section Header
+    const sectionHeader = document.createElement('div');
+    sectionHeader.className = 'section-header column-header';
+    sectionHeader.innerHTML = `
+      <div class="section-header-title column-header-title">
+        <span class="section-dot column-dot" style="background-color: ${escapeHtml(colColor)};"></span>
         <span>${escapeHtml(col.name)}</span>
       </div>
-      <span class="column-count">${itemsInCol.length}</span>
+      <span class="section-count column-count">${itemsInCol.length}</span>
     `;
 
-    colHeader.addEventListener('click', () => {
-      colEl.classList.toggle('collapsed');
+    sectionHeader.addEventListener('click', () => {
+      sectionEl.classList.toggle('collapsed');
     });
 
-    // Column Cards Body
+    // Section Cards Body
     const cardsEl = document.createElement('div');
-    cardsEl.className = 'column-cards';
+    cardsEl.className = 'section-cards column-cards';
 
     if (itemsInCol.length === 0) {
       const emptyEl = document.createElement('div');
-      emptyEl.className = 'empty-column';
-      emptyEl.style.cssText = 'color: var(--muted-fg); font-size: 11px; text-align: center; padding: 20px 8px;';
+      emptyEl.className = 'empty-section empty-column';
+      emptyEl.style.cssText = 'color: var(--muted-fg); font-size: 11px; text-align: center; padding: 12px 8px;';
       emptyEl.textContent = 'No items';
       cardsEl.appendChild(emptyEl);
     } else {
@@ -373,9 +366,9 @@ export function renderBoard() {
       }
     }
 
-    colEl.appendChild(colHeader);
-    colEl.appendChild(cardsEl);
-    columnsContainer.appendChild(colEl);
+    sectionEl.appendChild(sectionHeader);
+    sectionEl.appendChild(cardsEl);
+    cardsContainer.appendChild(sectionEl);
   }
 }
 
@@ -386,7 +379,6 @@ function initApp() {
   const refreshBtn = document.getElementById('refresh-btn');
   const retryBtn = document.getElementById('retry-btn');
   const filterInput = document.getElementById('filter-input');
-  const hideDoneCheckbox = document.getElementById('hide-done-checkbox');
   const changeRepoBtn = document.getElementById('change-repo-btn');
   const repoForm = document.getElementById('repo-form');
   const repoInput = document.getElementById('repo-input');
@@ -413,11 +405,6 @@ function initApp() {
 
   filterInput?.addEventListener('input', (e) => {
     boardState.filterQuery = e.target.value;
-    renderBoard();
-  });
-
-  hideDoneCheckbox?.addEventListener('change', (e) => {
-    boardState.hideDone = e.target.checked;
     renderBoard();
   });
 

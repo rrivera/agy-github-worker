@@ -42,6 +42,8 @@ describe('Standalone Server Static Assets', () => {
       assert.equal(resHtml.headers.get('content-type'), 'text/html; charset=utf-8');
       const htmlText = await resHtml.text();
       assert.match(htmlText, /<script src="\/app\.js"><\/script>/);
+      assert.doesNotMatch(htmlText, /hide-done-checkbox/);
+      assert.doesNotMatch(htmlText, /Hide Done/);
 
       const resCss = await fetch(`${baseUrl}/styles.css`);
       assert.equal(resCss.status, 200);
