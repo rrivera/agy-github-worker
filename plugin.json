@@ -22,7 +22,7 @@
   "logo": "assets/logo.svg",
   "suggestedPrompts": [
     "Poll and execute actionable agent-ready issues with /github-worker",
-    "Configure project preferences with /github-worker-setup",
+    "Configure project preferences with /setup-github-worker",
     "Review open pull requests using 3-axis peer reviewers"
   ]
 }

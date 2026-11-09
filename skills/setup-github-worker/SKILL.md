@@ -1,9 +1,9 @@
 ---
-name: github-worker-setup
+name: setup-github-worker
 description: Interactive setup wizard to configure and save project or global preferences for the /github-worker skill into AGENTS.md.
 ---
 
-# GitHub Worker Setup (`github-worker-setup`)
+# GitHub Worker Setup (`setup-github-worker`)
 
 An interactive configuration wizard to establish and persist preferences for the `/github-worker` skill. It codifies baseline branches, merge automation policies, and CI gating rules into a structured configuration block inside `AGENTS.md`.
 
