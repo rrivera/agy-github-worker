@@ -1,0 +1,8 @@
+{
+  "name": "github-worker-board",
+  "version": "1.0.0",
+  "description": "Antigravity sidecar board for agent-ready GitHub issues",
+  "type": "module",
+  "main": "main.mjs",
+  "dependencies": {}
+}

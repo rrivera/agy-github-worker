@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e1e2e"/>
+      <stop offset="100%" stop-color="#11111b"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#89b4fa"/>
+      <stop offset="100%" stop-color="#b4befe"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#a6e3a1"/>
+      <stop offset="100%" stop-color="#94e2d5"/>
+    </linearGradient>
+    <linearGradient id="peach" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fab387"/>
+      <stop offset="100%" stop-color="#f9e2af"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Outer Rounded Container -->
+  <rect x="8" y="8" width="112" height="112" rx="24" fill="url(#bg)" stroke="#313244" stroke-width="3"/>
+
+  <!-- Left Column (Todo / Backlog) -->
+  <rect x="22" y="24" width="24" height="80" rx="6" fill="#181825" stroke="#45475a" stroke-width="1.5"/>
+  <circle cx="34" cy="33" r="3" fill="url(#blue)"/>
+  <rect x="26" y="42" width="16" height="14" rx="3" fill="#313244"/>
+  <rect x="26" y="60" width="16" height="14" rx="3" fill="#313244"/>
+
+  <!-- Center Column (In Progress) -->
+  <rect x="52" y="24" width="24" height="80" rx="6" fill="#181825" stroke="url(#peach)" stroke-width="2"/>
+  <circle cx="64" cy="33" r="3" fill="url(#peach)"/>
+  <rect x="56" y="42" width="16" height="18" rx="3" fill="#45475a" stroke="url(#peach)" stroke-width="1"/>
+  <rect x="56" y="64" width="16" height="14" rx="3" fill="#313244"/>
+
+  <!-- Right Column (In Review / Done) -->
+  <rect x="82" y="24" width="24" height="80" rx="6" fill="#181825" stroke="#45475a" stroke-width="1.5"/>
+  <circle cx="94" cy="33" r="3" fill="url(#green)"/>
+  <rect x="86" y="42" width="16" height="14" rx="3" fill="#313244"/>
+  <rect x="86" y="60" width="16" height="18" rx="3" fill="#45475a" stroke="url(#green)" stroke-width="1"/>
+
+  <!-- GitHub Issue Sparkle / Agent Loop Badge -->
+  <circle cx="98" cy="98" r="16" fill="#1e1e2e" stroke="url(#blue)" stroke-width="2"/>
+  <path d="M98 89 L100 95 L106 98 L100 101 L98 107 L96 101 L90 98 L96 95 Z" fill="url(#blue)"/>
+</svg>
