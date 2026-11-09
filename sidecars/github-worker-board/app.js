@@ -6,6 +6,7 @@ let boardState = {
   items: [],
   lastUpdated: null,
   activeWorkspaceUri: null,
+  userOverrideRepo: '',
   filterQuery: '',
   hideDone: false,
   isRefreshing: false,
@@ -58,7 +59,9 @@ async function loadBoard() {
   const refreshBtn = document.getElementById('refresh-btn');
   const errorBanner = document.getElementById('error-banner');
   const errorMsg = document.getElementById('error-message');
+  const promptBanner = document.getElementById('repo-prompt-banner');
   const statusBar = document.getElementById('last-updated-text');
+  const changeRepoBtn = document.getElementById('change-repo-btn');
 
   refreshBtn?.classList.add('spinning');
   errorBanner.style.display = 'none';
@@ -68,10 +71,15 @@ async function loadBoard() {
       boardState.activeWorkspaceUri = await resolveWorkspaceUri();
     }
 
-    const endpoint = boardState.activeWorkspaceUri
-      ? `/api/issues?workspaceUri=${encodeURIComponent(boardState.activeWorkspaceUri)}`
-      : '/api/issues';
+    const params = new URLSearchParams();
+    if (boardState.activeWorkspaceUri) {
+      params.set('workspaceUri', boardState.activeWorkspaceUri);
+    }
+    if (boardState.userOverrideRepo) {
+      params.set('targetRepo', boardState.userOverrideRepo);
+    }
 
+    const endpoint = `/api/issues?${params.toString()}`;
     const res = await apiFetch(endpoint);
     if (!res.ok) {
       const text = await res.text();
@@ -83,6 +91,19 @@ async function loadBoard() {
     }
 
     const data = await res.json();
+
+    if (data.needsTargetRepo) {
+      promptBanner.style.display = 'block';
+      statusBar.textContent = 'Awaiting target repository';
+      boardState.repository = null;
+      boardState.items = [];
+      renderBoard();
+      return;
+    }
+
+    promptBanner.style.display = 'none';
+    if (changeRepoBtn) changeRepoBtn.style.display = 'inline-flex';
+
     boardState.repository = data.repository;
     boardState.columns = data.columns || [];
     boardState.items = data.items || [];
@@ -114,15 +135,13 @@ function renderBoard() {
   const repoBadgeEl = document.getElementById('repo-badge');
   const columnsContainer = document.getElementById('columns-container');
 
-  if (boardState.repository) {
+  if (boardState.repository && boardState.repository.slug) {
     boardTitleEl.textContent = 'GitHub Worker Board';
-    if (boardState.repository.slug) {
-      repoBadgeEl.textContent = boardState.repository.slug;
-      repoBadgeEl.style.display = 'inline-flex';
-      repoBadgeEl.title = `Source: ${boardState.repository.source}`;
-    } else {
-      repoBadgeEl.style.display = 'none';
-    }
+    repoBadgeEl.textContent = boardState.repository.slug;
+    repoBadgeEl.style.display = 'inline-flex';
+    repoBadgeEl.title = `Source: ${boardState.repository.source}`;
+  } else {
+    repoBadgeEl.style.display = 'none';
   }
 
   // Filter items by search query
@@ -296,9 +315,29 @@ document.addEventListener('DOMContentLoaded', () => {
   const retryBtn = document.getElementById('retry-btn');
   const filterInput = document.getElementById('filter-input');
   const hideDoneCheckbox = document.getElementById('hide-done-checkbox');
+  const changeRepoBtn = document.getElementById('change-repo-btn');
+  const repoForm = document.getElementById('repo-form');
+  const repoInput = document.getElementById('repo-input');
+  const promptBanner = document.getElementById('repo-prompt-banner');
 
   refreshBtn?.addEventListener('click', () => loadBoard());
   retryBtn?.addEventListener('click', () => loadBoard());
+
+  changeRepoBtn?.addEventListener('click', () => {
+    promptBanner.style.display = promptBanner.style.display === 'none' ? 'block' : 'none';
+    if (promptBanner.style.display === 'block') {
+      repoInput?.focus();
+    }
+  });
+
+  repoForm?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const val = (repoInput?.value || '').trim();
+    if (val && val.includes('/')) {
+      boardState.userOverrideRepo = val;
+      loadBoard();
+    }
+  });
 
   filterInput?.addEventListener('input', (e) => {
     boardState.filterQuery = e.target.value;
@@ -315,6 +354,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.sidecar.onWorkspaceChange((uris) => {
       if (Array.isArray(uris) && uris.length > 0) {
         boardState.activeWorkspaceUri = uris[0];
+        boardState.userOverrideRepo = '';
         loadBoard();
       }
     });

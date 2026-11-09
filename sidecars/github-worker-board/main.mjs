@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
@@ -17,70 +17,25 @@ const COLUMNS = [
 ];
 
 /**
- * Parses simple .env format key=value pairs into an object.
+ * Resolves target repository from workspace git repository or user-provided override.
+ * Strictly follows github-worker Section 1:
+ * - If inside a git repository, resolves via `gh repo view --json nameWithOwner -q .nameWithOwner`.
+ * - If outside a git repository or unresolved, prompts user for OWNER/REPO.
  */
-function parseEnvFile(filePath) {
-  if (!existsSync(filePath)) return {};
-  try {
-    const content = readFileSync(filePath, 'utf-8');
-    const result = {};
-    for (const rawLine of content.split('\n')) {
-      const line = rawLine.trim();
-      if (!line || line.startsWith('#')) continue;
-      const eqIdx = line.indexOf('=');
-      if (eqIdx <= 0) continue;
-      const key = line.slice(0, eqIdx).trim();
-      let val = line.slice(eqIdx + 1).trim();
-      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-        val = val.slice(1, -1);
-      }
-      result[key] = val;
-    }
-    return result;
-  } catch (err) {
-    console.error(`Failed to read env file at ${filePath}:`, err);
-    return {};
+async function resolveRepoTarget(workspaceUri, userOverrideRepo) {
+  // If user provided a specific repository in the UI, prioritize it
+  if (userOverrideRepo && typeof userOverrideRepo === 'string' && userOverrideRepo.trim().includes('/')) {
+    const slug = userOverrideRepo.trim();
+    const [owner, repo] = slug.split('/');
+    return { repoSlug: slug, owner, repo, source: 'user-prompt' };
   }
-}
 
-/**
- * Resolves repository target and git working directory.
- */
-async function resolveRepoTarget(workspaceUri) {
-  const candidates = [];
   let workspaceDir = '';
-
   if (workspaceUri) {
-    const rawPath = workspaceUri.startsWith('file://') ? fileURLToPath(workspaceUri) : workspaceUri;
-    workspaceDir = rawPath;
-    candidates.push(resolve(rawPath, '.env'));
-  }
-  candidates.push(resolve(process.cwd(), '.env'));
-  candidates.push('/home/null/projects/remote-work/.env');
-
-  let envData = {};
-  let resolvedEnvPath = null;
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) {
-      envData = parseEnvFile(candidate);
-      resolvedEnvPath = candidate;
-      break;
-    }
+    workspaceDir = workspaceUri.startsWith('file://') ? fileURLToPath(workspaceUri) : workspaceUri;
   }
 
-  // 1. Try environment variables / .env
-  const owner = envData.GITHUB_OWNER || process.env.GITHUB_OWNER || '';
-  const repoName = envData.GITHUB_REPO || process.env.GITHUB_REPO || '';
-  if (owner && repoName) {
-    return {
-      repoSlug: `${owner}/${repoName}`,
-      owner,
-      repo: repoName,
-      source: `env (${resolvedEnvPath || 'environment'})`,
-    };
-  }
-
-  // 2. Try git remote in workspace directory
+  // Attempt resolving from workspace directory using gh repo view
   if (workspaceDir && existsSync(workspaceDir)) {
     try {
       const { stdout } = await execFileAsync('gh', ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], {
@@ -88,21 +43,13 @@ async function resolveRepoTarget(workspaceUri) {
       });
       const slug = stdout.trim();
       if (slug && slug.includes('/')) {
-        const [o, r] = slug.split('/');
-        return { repoSlug: slug, owner: o, repo: r, source: `git (${workspaceDir})` };
+        const [owner, repo] = slug.split('/');
+        return { repoSlug: slug, owner, repo, source: `git (${workspaceDir})` };
       }
-    } catch (_) {}
-  }
-
-  // 3. Fallback to process cwd git
-  try {
-    const { stdout } = await execFileAsync('gh', ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner']);
-    const slug = stdout.trim();
-    if (slug && slug.includes('/')) {
-      const [o, r] = slug.split('/');
-      return { repoSlug: slug, owner: o, repo: r, source: 'current directory' };
+    } catch (_) {
+      // Not a git repo or gh repo view failed
     }
-  } catch (_) {}
+  }
 
   return { repoSlug: '', owner: '', repo: '', source: 'unresolved' };
 }
@@ -110,10 +57,17 @@ async function resolveRepoTarget(workspaceUri) {
 /**
  * Fetches open issues labeled agent-ready and recent closed issues labeled agent-ready.
  */
-async function fetchIssuesData(workspaceUri) {
-  const { repoSlug, owner, repo, source } = await resolveRepoTarget(workspaceUri);
+async function fetchIssuesData(workspaceUri, userOverrideRepo) {
+  const { repoSlug, owner, repo, source } = await resolveRepoTarget(workspaceUri, userOverrideRepo);
+
   if (!repoSlug) {
-    throw new Error('Could not resolve target GitHub repository. Ensure GITHUB_OWNER and GITHUB_REPO are set in .env or run inside a GitHub repository.');
+    return {
+      needsTargetRepo: true,
+      repository: null,
+      columns: COLUMNS,
+      items: [],
+      lastUpdated: new Date().toISOString(),
+    };
   }
 
   const ghRepoArgs = ['-R', repoSlug];
@@ -192,7 +146,7 @@ async function fetchIssuesData(workspaceUri) {
 
   for (const issue of allIssues) {
     const labelNames = (issue.labels || []).map((l) => (typeof l === 'string' ? l : l.name));
-    const isClosed = issue.closedAt || issue.state === 'CLOSED';
+    const isClosed = Boolean(issue.closedAt || issue.state === 'CLOSED');
 
     let status = 'Todo';
     if (labelNames.includes('status:done') || isClosed) {
@@ -307,6 +261,7 @@ async function fetchIssuesData(workspaceUri) {
   }
 
   return {
+    needsTargetRepo: false,
     repository: {
       slug: repoSlug,
       owner,
@@ -341,18 +296,20 @@ async function start() {
 
     app.api('/api/issues', async (data) => {
       const workspaceUri = data?.workspaceUri || '';
-      return fetchIssuesData(workspaceUri);
+      const targetRepo = data?.targetRepo || '';
+      return fetchIssuesData(workspaceUri, targetRepo);
     }, 'GET');
 
     app.api('/api/issues', async (data) => {
       const workspaceUri = data?.workspaceUri || '';
-      return fetchIssuesData(workspaceUri);
+      const targetRepo = data?.targetRepo || '';
+      return fetchIssuesData(workspaceUri, targetRepo);
     }, 'POST');
 
     await app.run();
     console.log('[github-worker-board] SidecarApp running in Antigravity environment');
   } else {
-    // Standalone fallback HTTP server for testing or standalone browser use
+    // Standalone fallback HTTP server for testing
     const port = parseInt(process.env.PORT || '8999', 10);
     const server = createServer(async (req, res) => {
       const url = new URL(req.url, `http://localhost:${port}`);
@@ -377,7 +334,7 @@ async function start() {
         res.end(`
           window.sidecar = {
             fetch: (url, opts) => fetch(url, opts),
-            getWorkspaceUris: async () => ["file:///home/null/projects/remote-work"],
+            getWorkspaceUris: async () => [],
             onWorkspaceChange: () => () => {},
           };
         `);
@@ -386,7 +343,8 @@ async function start() {
       if (url.pathname === '/api/issues') {
         try {
           const workspaceUri = url.searchParams.get('workspaceUri') || '';
-          const result = await fetchIssuesData(workspaceUri);
+          const targetRepo = url.searchParams.get('targetRepo') || '';
+          const result = await fetchIssuesData(workspaceUri, targetRepo);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(result));
         } catch (err) {

@@ -212,6 +212,72 @@ body {
   font-size: 11px;
 }
 
+/* Repository Prompt Banner */
+.repo-prompt-banner {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  padding: 12px 14px;
+  margin: 10px 14px 0;
+  border-radius: 6px;
+}
+
+.prompt-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--primary-color);
+}
+
+.prompt-desc {
+  font-size: 11.5px;
+  color: var(--muted-fg);
+  margin-bottom: 10px;
+}
+
+.prompt-desc code {
+  font-family: var(--mono);
+  background: var(--muted-bg);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.repo-form {
+  display: flex;
+  gap: 8px;
+}
+
+.repo-form input {
+  flex: 1;
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  background: var(--muted-bg);
+  color: var(--fg);
+  font-size: 12px;
+  outline: none;
+  font-family: var(--mono);
+}
+
+.repo-form input:focus {
+  border-color: var(--primary-color);
+}
+
+.submit-btn {
+  background: var(--primary-color);
+  color: var(--primary-fg);
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.submit-btn:hover {
+  opacity: 0.9;
+}
+
 /* Columns Container */
 .columns-container {
   display: flex;
