@@ -19,14 +19,27 @@ Polls a GitHub repository's open `agent-ready` issues via `gh` CLI, dispatches p
      ```
    - If run outside a git repository (or if `gh repo view` fails), **ask the user** for the target repository (`OWNER/REPO`) and local clone path before proceeding.
    - Pass `-R "$REPO"` to all `gh` commands.
-3. **Baseline Branch Resolution (`BASE_BRANCH`)**:
-   - If the user explicitly specifies a target baseline branch (e.g. `/github-worker against develop branch`, `targeting develop`, `on release-1.0 branch`), use that branch.
+3. **Project Policy Discovery (`AGENTS.md`)**:
+   - Check `./AGENTS.md` (or `.agents/rules/AGENTS.md`, falling back to `~/.gemini/config/rules/AGENTS.md`) for an active policy block:
+     ```markdown
+     <!-- github-worker:config -->
+     ## GitHub Worker Policy
+     - **Base Branch**: `<BRANCH>`
+     - **Merge Policy**: `<manual|auto-merge>`
+     - **CI Gating**: `<strict|permissive>`
+     <!-- /github-worker:config -->
+     ```
+   - **Precedence**: User instructions in the current prompt override `AGENTS.md` policies, which in turn override default fallbacks.
+   - If no policy block is found, proceed with default fallbacks and notify: *"Tip: Run `/github-worker-setup` to persist project preferences in `AGENTS.md`."*
+4. **Baseline Branch Resolution (`BASE_BRANCH`)**:
+   - If the user explicitly specifies a target baseline branch (e.g. `/github-worker against develop branch`, `targeting develop`), use that branch.
+   - Else if `Base Branch` is configured in `AGENTS.md`, use that value.
    - Otherwise, dynamically detect the repository's configured default branch:
      ```bash
      BASE_BRANCH=$(gh repo view -R "$REPO" --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || echo "main")
      ```
    - All worktree creations, upstream rebases, PR base branches, and merge fast-forwards use `<BASE_BRANCH>`.
-4. **Checking & Monitoring GitHub API Rate Limits**:
+5. **Checking & Monitoring GitHub API Rate Limits**:
    - Check current rate limit quota before initiating polling or subagent operations:
      ```bash
      gh api rate_limit --jq '.rate | {limit, remaining, reset: (.reset | todate)}'
@@ -34,7 +47,7 @@ Polls a GitHub repository's open `agent-ready` issues via `gh` CLI, dispatches p
    - **Handling Low Quotas & Secondary Rate Limits**:
      - If `remaining < 20`: Quota is nearly exhausted. Note the `reset` timestamp and pause batch operations or subagent dispatches until quota restores.
      - If any `gh` command fails with HTTP 403 or 429 ("secondary rate limit" or "rate limit exceeded"): Inspect the reset timestamp via `gh api rate_limit` and wait for the reset window to elapse rather than retrying immediately in a tight loop.
-5. **Targeted Scoping & Intent Detection**:
+6. **Targeted Scoping & Intent Detection**:
    The user can guide execution directly in their prompt:
    - **Baseline Branch**: e.g. `/github-worker against develop branch`, `/github-worker targeting staging`.
    - **Specific Issues**: e.g. `/github-worker for issue #12`, `/github-worker resolve 12 and 15`.
@@ -244,8 +257,8 @@ Once all 3 peer reviewers record `APPROVE`:
 3. **Merge Policy: Manual Merge by Default vs. Explicit Auto-Merge Preference**:
    - **Default Behavior (Do Not Merge Automatically)**:
      By default, the worker **never** merges the PR or closes the issue. It stops here at `status:in-review` and awaits human review and manual merge. Notify the user with links to the issue, PR, and review reports.
-   - **Explicit Opt-In (User Auto-Merge Preference)**:
-     Only proceed to squash-merge and mark `status:done` if the user explicitly provided an auto-merge preference (for example: `"pull the issues with /github-worker. Proceed to merge them and mark as done without my review"`, `"auto-merge on approval"`, or `"merge automatically"`):
+   - **Explicit Opt-In (User Request or `AGENTS.md` Policy)**:
+     Only proceed to squash-merge and mark `status:done` if the user explicitly requested auto-merge (e.g. `"auto-merge on approval"`) or if `Merge Policy: auto-merge` is configured in `AGENTS.md`:
      ```bash
      # 1. Squash-merge PR and delete remote branch
      gh pr merge <PR_NUM> -R "$REPO" --squash --delete-branch
