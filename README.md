@@ -7,25 +7,30 @@
 [![GitHub Repo](https://img.shields.io/badge/GitHub-rrivera%2Fagy--github--worker-blue.svg)](https://github.com/rrivera/agy-github-worker)
 [![Antigravity Plugin](https://img.shields.io/badge/Antigravity-Plugin-89b4fa.svg)](https://antigravity.google)
 
-Antigravity plugin and live auxiliary-pane sidecar board for the `/github-worker` skill.
+Core Antigravity plugin providing the autonomous `/github-worker` skill for agent-ready GitHub issue workflows.
 
 ---
 
 ## Overview
 
-`agy-github-worker` provides:
-1. **`/github-worker` Skill**: Fully autonomous GitHub issue worker that:
-   - Polls open issues labeled `agent-ready`.
-   - Tracks workflow status via repository labels (`status:todo`, `status:in-progress`, `status:waiting-on-user`, `status:in-review`, `status:done`).
-   - Dispatches parallel `architect` subagents with isolated git worktrees.
-   - Executes Test-Driven Development (TDD) quality gates.
-   - Coordinates 3-axis peer code reviews (Spec, Standards, Security) with diff-driven observable predicates.
-   - Automatically squash-merges conflict-free approved PRs and marks issues `status:done`.
-2. **`github-worker-board` Sidecar**: A live Kanban board embedded directly in Antigravity's auxiliary side pane:
-   - Categorizes issues across **Todo**, **In Progress**, **Waiting on User**, **In Review**, and **Done**.
-   - Displays real-time action status badges (`NEEDS_PLAN`, `USER_REPLIED`, `NEEDS_REVISION`, `WAITING_ON_USER`).
-   - Surfaces direct clickable links to each GitHub issue and associated Pull Requests.
-   - Auto-refreshes every 30 seconds and reacts to Antigravity workspace changes.
+`agy-github-worker` is a fully autonomous issue worker engine built specifically for Antigravity:
+
+- **Autonomous Issue Polling**: Scans target repositories for issues opted in via the `agent-ready` label.
+- **Workflow State Management**: Manages state progression through labels (`status:todo`, `status:in-progress`, `status:waiting-on-user`, `status:in-review`, `status:done`).
+- **Parallel Subagent Dispatch**: Spawns isolated `architect` subagents in dedicated git worktrees (`.worktrees/issue-<number>`), isolating builds and tests.
+- **TDD Quality Gate**: Enforces Test-Driven Development (Red -> Green -> Refactor) and empirical verification before opening Pull Requests.
+- **3-Axis Peer Code Review**: Automatically dispatches parallel read-only review subagents (`spec-reviewer`, `standards-reviewer`, `security-reviewer`) to evaluate changes against observable predicates.
+- **Manual Merge Safety**: Keeps approved PRs in `status:in-review` for human approval by default, with per-conversation opt-in for automated squash-merging.
+
+---
+
+## Companion UI Board
+
+Looking for the live Kanban auxiliary side pane? Install the standalone companion UI plugin:
+
+👉 [**`rrivera/agy-github-worker-board`**](https://github.com/rrivera/agy-github-worker-board)
+
+The companion board runs as an isolated sidecar webview in Antigravity's auxiliary side pane, providing real-time issue cards and GitHub navigation with zero AI token overhead.
 
 ---
 
@@ -33,39 +38,54 @@ Antigravity plugin and live auxiliary-pane sidecar board for the `/github-worker
 
 ```text
 agy-github-worker/
-├── plugin.json                              # Plugin manifest
-├── README.md                                # Repository & installation documentation
+├── plugin.json                              # Antigravity plugin manifest
+├── README.md                                # Documentation & usage guide
 ├── assets/
-│   ├── logo.svg                             # Plugin icon (vector)
-│   └── logo.png                             # Plugin icon (rendered PNG)
-├── skills/
-│   └── github-worker/
-│       ├── SKILL.md                         # Main skill entrypoint
-│       └── references/
-│           ├── architect-prompt.md          # Canonical architect subagent contract
-│           └── reviewer-prompts.md          # Canonical 3-axis reviewer contracts
-└── sidecars/
-    └── github-worker-board/
-        ├── sidecar.json                     # Sidecar manifest for Antigravity UI
-        ├── package.json
-        ├── main.mjs                         # Backend server & GitHub CLI data fetcher
-        ├── index.html                       # Sidecar HTML structure
-        ├── styles.css                       # Catppuccin theme matching Antigravity
-        └── app.js                           # Client-side reactivity & rendering
+│   ├── logo.svg                             # Vector logo
+│   └── logo.png                             # Rendered PNG logo
+└── skills/
+    └── github-worker/
+        ├── SKILL.md                         # Core skill entrypoint & state machine
+        └── references/
+            ├── architect-prompt.md          # Canonical architect subagent contract
+            └── reviewer-prompts.md          # Canonical 3-axis reviewer contracts
 ```
 
 ---
 
 ## Installation in Antigravity
 
-Clone or symlink the repository into your Antigravity plugins directory:
+Clone the repository into your Antigravity plugins directory:
 
 ```bash
 mkdir -p ~/.gemini/config/plugins
 git clone https://github.com/rrivera/agy-github-worker ~/.gemini/config/plugins/agy-github-worker
 ```
 
-Restart Antigravity to discover the plugin and sidecar. Once loaded, the `/github-worker` slash command and the sidecar board will be available globally across all workspaces.
+Alternatively, you can install just the skill directory directly into your global skills:
+
+```bash
+mkdir -p ~/.gemini/config/skills
+cp -r skills/github-worker ~/.gemini/config/skills/
+```
+
+Restart Antigravity. The `/github-worker` slash command will be available across all your workspaces.
+
+---
+
+## Usage
+
+In any Antigravity conversation within a Git repository:
+
+```text
+/github-worker
+```
+
+To enable automatic merging for a specific session:
+
+```text
+/github-worker Pull the issues. Proceed to merge them and mark as done without my review.
+```
 
 ---
 

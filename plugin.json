@@ -1,12 +1,11 @@
 {
   "name": "agy-github-worker",
   "displayName": "GitHub Worker",
-  "description": "Autonomous GitHub Issue Worker and live sidecar status board for agent-ready workflows.",
+  "description": "Autonomous GitHub Issue Worker for agent-ready workflows in Antigravity.",
   "version": "1.0.0",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [
-    "Poll and execute all actionable agent-ready issues with /github-worker",
-    "Show the current status of agent-ready GitHub issues in the sidecar board",
+    "Poll and execute actionable agent-ready issues with /github-worker",
     "Review open pull requests using 3-axis peer reviewers"
   ]
 }
