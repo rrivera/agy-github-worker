@@ -121,13 +121,17 @@ export async function apiFetch(url, options = {}) {
 
 /**
  * Resolves current workspace URI from window.sidecar when available.
+ * Uses a safe timeout race to prevent indefinite suspension if host events are delayed.
  *
+ * @param {number} [timeoutMs=2000] - Timeout in milliseconds for resolution.
  * @returns {Promise<string>} Workspace URI or empty string.
  */
-export async function resolveWorkspaceUri() {
+export async function resolveWorkspaceUri(timeoutMs = 2000) {
   if (typeof window !== 'undefined' && window.sidecar && typeof window.sidecar.getWorkspaceUris === 'function') {
     try {
-      const uris = await window.sidecar.getWorkspaceUris();
+      const urisPromise = window.sidecar.getWorkspaceUris();
+      const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve([]), timeoutMs));
+      const uris = await Promise.race([urisPromise, timeoutPromise]);
       if (Array.isArray(uris) && uris.length > 0) {
         return uris[0];
       }
@@ -375,64 +379,73 @@ export function renderBoard() {
   }
 }
 
-// Event Listeners setup for browser execution
-if (typeof window !== 'undefined' && typeof document !== 'undefined') {
-  document.addEventListener('DOMContentLoaded', () => {
-    const refreshBtn = document.getElementById('refresh-btn');
-    const retryBtn = document.getElementById('retry-btn');
-    const filterInput = document.getElementById('filter-input');
-    const hideDoneCheckbox = document.getElementById('hide-done-checkbox');
-    const changeRepoBtn = document.getElementById('change-repo-btn');
-    const repoForm = document.getElementById('repo-form');
-    const repoInput = document.getElementById('repo-input');
-    const promptBanner = document.getElementById('repo-prompt-banner');
+/**
+ * Initializes DOM event listeners and triggers initial board load.
+ */
+function initApp() {
+  const refreshBtn = document.getElementById('refresh-btn');
+  const retryBtn = document.getElementById('retry-btn');
+  const filterInput = document.getElementById('filter-input');
+  const hideDoneCheckbox = document.getElementById('hide-done-checkbox');
+  const changeRepoBtn = document.getElementById('change-repo-btn');
+  const repoForm = document.getElementById('repo-form');
+  const repoInput = document.getElementById('repo-input');
+  const promptBanner = document.getElementById('repo-prompt-banner');
 
-    refreshBtn?.addEventListener('click', () => loadBoard());
-    retryBtn?.addEventListener('click', () => loadBoard());
+  refreshBtn?.addEventListener('click', () => loadBoard());
+  retryBtn?.addEventListener('click', () => loadBoard());
 
-    changeRepoBtn?.addEventListener('click', () => {
-      promptBanner.style.display = promptBanner.style.display === 'none' ? 'block' : 'none';
-      if (promptBanner.style.display === 'block') {
-        repoInput?.focus();
-      }
-    });
+  changeRepoBtn?.addEventListener('click', () => {
+    promptBanner.style.display = promptBanner.style.display === 'none' ? 'block' : 'none';
+    if (promptBanner.style.display === 'block') {
+      repoInput?.focus();
+    }
+  });
 
-    repoForm?.addEventListener('submit', (e) => {
-      e.preventDefault();
-      const val = (repoInput?.value || '').trim();
-      if (val && val.includes('/')) {
-        boardState.userOverrideRepo = val;
+  repoForm?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const val = (repoInput?.value || '').trim();
+    if (val && val.includes('/')) {
+      boardState.userOverrideRepo = val;
+      loadBoard();
+    }
+  });
+
+  filterInput?.addEventListener('input', (e) => {
+    boardState.filterQuery = e.target.value;
+    renderBoard();
+  });
+
+  hideDoneCheckbox?.addEventListener('change', (e) => {
+    boardState.hideDone = e.target.checked;
+    renderBoard();
+  });
+
+  // Re-resolve and reload when workspace changes in Antigravity
+  if (window.sidecar && typeof window.sidecar.onWorkspaceChange === 'function') {
+    window.sidecar.onWorkspaceChange((uris) => {
+      if (Array.isArray(uris) && uris.length > 0) {
+        boardState.activeWorkspaceUri = uris[0];
+        boardState.userOverrideRepo = '';
         loadBoard();
       }
     });
+  }
 
-    filterInput?.addEventListener('input', (e) => {
-      boardState.filterQuery = e.target.value;
-      renderBoard();
-    });
+  // Initial load
+  loadBoard();
 
-    hideDoneCheckbox?.addEventListener('change', (e) => {
-      boardState.hideDone = e.target.checked;
-      renderBoard();
-    });
-
-    // Re-resolve and reload when workspace changes in Antigravity
-    if (window.sidecar && typeof window.sidecar.onWorkspaceChange === 'function') {
-      window.sidecar.onWorkspaceChange((uris) => {
-        if (Array.isArray(uris) && uris.length > 0) {
-          boardState.activeWorkspaceUri = uris[0];
-          boardState.userOverrideRepo = '';
-          loadBoard();
-        }
-      });
-    }
-
-    // Initial load
+  // Polling every 30 seconds
+  setInterval(() => {
     loadBoard();
+  }, 30000);
+}
 
-    // Polling every 30 seconds
-    setInterval(() => {
-      loadBoard();
-    }, 30000);
-  });
+// Event Listeners setup for browser execution
+if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initApp);
+  } else {
+    initApp();
+  }
 }

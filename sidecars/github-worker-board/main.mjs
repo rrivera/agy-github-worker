@@ -421,6 +421,16 @@ const isAntigravityEnv = Boolean(
 );
 
 /**
+ * Loads app.js and strips ES module export directives for browser consumption as a classic script.
+ *
+ * @returns {string} Classic browser JavaScript code.
+ */
+export function getBrowserAppJs() {
+  const raw = readFileSync(join(__dirname, 'app.js'), 'utf-8');
+  return raw.replace(/^export\s+/gm, '');
+}
+
+/**
  * Initializes and starts the Sidecar application in Antigravity or standalone HTTP server mode.
  */
 export async function start() {
@@ -432,7 +442,7 @@ export async function start() {
     app.page('/styles.css', () => new SdkResponse(readFileSync(join(__dirname, 'styles.css'), 'utf-8'), {
       contentType: 'text/css',
     }));
-    app.page('/app.js', () => new SdkResponse(readFileSync(join(__dirname, 'app.js'), 'utf-8'), {
+    app.page('/app.js', () => new SdkResponse(getBrowserAppJs(), {
       contentType: 'application/javascript',
     }));
 
@@ -468,7 +478,7 @@ export async function start() {
       }
       if (url.pathname === '/app.js') {
         res.writeHead(200, { 'Content-Type': 'application/javascript' });
-        res.end(readFileSync(join(__dirname, 'app.js'), 'utf-8'));
+        res.end(getBrowserAppJs());
         return;
       }
       if (url.pathname === '/preload.js') {

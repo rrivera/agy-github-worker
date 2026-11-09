@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { getBrowserAppJs } from '../main.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const boardDir = join(__dirname, '..');
@@ -24,7 +25,7 @@ describe('Standalone Server Static Assets', () => {
       }
       if (url.pathname === '/app.js') {
         res.writeHead(200, { 'Content-Type': 'application/javascript' });
-        res.end(readFileSync(join(boardDir, 'app.js'), 'utf-8'));
+        res.end(getBrowserAppJs());
         return;
       }
       res.writeHead(404);
@@ -40,7 +41,7 @@ describe('Standalone Server Static Assets', () => {
       assert.equal(resHtml.status, 200);
       assert.equal(resHtml.headers.get('content-type'), 'text/html; charset=utf-8');
       const htmlText = await resHtml.text();
-      assert.match(htmlText, /<script type="module" src="\/app\.js"><\/script>/);
+      assert.match(htmlText, /<script src="\/app\.js"><\/script>/);
 
       const resCss = await fetch(`${baseUrl}/styles.css`);
       assert.equal(resCss.status, 200);
@@ -50,7 +51,8 @@ describe('Standalone Server Static Assets', () => {
       assert.equal(resJs.status, 200);
       assert.equal(resJs.headers.get('content-type'), 'application/javascript');
       const jsText = await resJs.text();
-      assert.match(jsText, /export function escapeHtml/);
+      assert.match(jsText, /function escapeHtml/);
+      assert.doesNotMatch(jsText, /^export\s+/m);
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
