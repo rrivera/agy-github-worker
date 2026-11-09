@@ -83,6 +83,7 @@ The wizard guides you through three key decisions and codifies your preferences 
 - **Base Branch**: main
 - **Merge Policy**: manual
 - **CI Gating**: strict
+- **Force Model Tier**: pro          # optional manual override: pro | flash | inherit
 <!-- /github-worker:config -->
 ```
 
@@ -90,9 +91,10 @@ The wizard guides you through three key decisions and codifies your preferences 
 
 | Option | Values | Default | Description |
 | :--- | :--- | :--- | :--- |
-| **Base Branch** | `<branch-name>` | Detected default branch (e.g. `main`) | The upstream branch that feature worktrees branch from, rebase against, and target in PRs (e.g. `main`, `develop`, `release/*`). |
-| **Merge Policy** | `manual` \| `auto-merge` | `manual` | • **`manual`**: Safe default. Completes worktrees, passes CI, collects 3 peer reviews, sets `status:in-review`, and pauses for human approval.<br>• **`auto-merge`**: Autonomous completion. Automatically squash-merges the PR, deletes the remote branch, and marks `status:done` once CI passes and all 3 peer reviews approve. |
-| **CI Gating** | `strict` \| `permissive` | `strict` | • **`strict`**: Monitors GitHub Actions workflow runs on open PRs and blocks peer review dispatch until all checks succeed.<br>• **`permissive`**: Bypasses GitHub Actions status polling, relying strictly on the local test suite executed during development. |
+| **Base Branch** | `<branch-name>` | Detected default branch (e.g. `main`) | The upstream branch that feature worktrees branch from, rebase against, and target in PRs (e.g. `main`, `develop`, `release/*`). Configured via `/github-worker-setup`. |
+| **Merge Policy** | `manual` \| `auto-merge` | `manual` | • **`manual`**: Safe default. Completes worktrees, passes CI, collects 3 peer reviews, sets `status:in-review`, and pauses for human approval.<br>• **`auto-merge`**: Autonomous completion. Automatically squash-merges the PR, deletes the remote branch, and marks `status:done` once CI passes and all 3 peer reviews approve. Configured via `/github-worker-setup`. |
+| **CI Gating** | `strict` \| `permissive` | `strict` | • **`strict`**: Monitors GitHub Actions workflow runs on open PRs and blocks peer review dispatch until all checks succeed.<br>• **`permissive`**: Bypasses GitHub Actions status polling, relying strictly on the local test suite executed during development. Configured via `/github-worker-setup`. |
+| **Force Model Tier** | `pro` \| `flash` \| `inherit` | *(Unspecified / Role Matrix)* | *Optional manual setting in `AGENTS.md`*:<br>• **Unspecified (Default)**: The orchestrator automatically passes role-matched tiers to `invoke_subagent`—`architect` **always** uses `"pro"` (the flagship model, e.g. Argon 4) even inside a Flash session, while reviewers follow the PR complexity matrix and mechanical workers use `"flash"`.<br>• **`pro`**: Forces `"pro"` across all subagents (`architect` and all reviewers).<br>• **`flash`**: Forces `"flash"` across all subagents.<br>• **`inherit`**: Subagents inherit the active orchestrator session model. |
 
 ### Precedence Hierarchy
 

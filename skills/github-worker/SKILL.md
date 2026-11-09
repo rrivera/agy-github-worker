@@ -27,9 +27,11 @@ Polls a GitHub repository's open `agent-ready` issues via `gh` CLI, dispatches p
      - **Base Branch**: `<BRANCH>`
      - **Merge Policy**: `<manual|auto-merge>`
      - **CI Gating**: `<strict|permissive>`
+     - **Force Model Tier**: `<pro|flash|inherit>` (optional manual override)
      <!-- /github-worker:config -->
      ```
    - **Precedence**: User instructions in the current prompt override `AGENTS.md` policies, which in turn override default fallbacks.
+   - **Model Tier Policy**: If `Force Model Tier` is specified, all subagents use that tier. Otherwise, the orchestrator strictly enforces role-based model tiers (`architect` uses `"pro"`, reviewers follow Section 7).
    - If no policy block is found, proceed with default fallbacks and notify: *"Tip: Run `/github-worker-setup` to persist project preferences in `AGENTS.md`."*
 4. **Baseline Branch Resolution (`BASE_BRANCH`)**:
    - If the user explicitly specifies a target baseline branch (e.g. `/github-worker against develop branch`, `targeting develop`), use that branch.
@@ -141,9 +143,13 @@ The main orchestrator thread runs issue polling, label transitions, and top-leve
    - `standards-reviewer` (`EnableWriteTools: true`, `EnableSubagentTools: false`): Cold-start Standards, DRYness & Code Smell reviewer.
    - `security-reviewer` (`EnableWriteTools: true`, `EnableSubagentTools: false`): Cold-start Security & Vulnerability reviewer.
 
-2. **How to Pass `Model` and `Reasoning-Level` to `invoke_subagent`**:
-   - Pass the model tier (`"flash_lite"`, `"flash"`, or `"pro"`) via the `Model` argument of `invoke_subagent`.
-   - Because `invoke_subagent` only accepts `Model`, `Prompt`, `Role`, `TypeName`, and `Workspace` in its tool schema, **always pass `Reasoning-Level: <low|medium|high>` as an explicit directive line at the top of the `Prompt` argument** (or inside `SystemPrompt` in `define_subagent`).
+2. **Mandatory Explicit Model Assignment (`invoke_subagent`)**:
+   - **Never Omit `Model` or Default to `"inherit"`**: Even when the orchestrator session is running on a Flash model, the orchestrator must **always explicitly pass `Model: "pro"` or `Model: "flash"`** when calling `invoke_subagent`. Omitting `Model` causes subagents to inherit the parent session model, degrading architectural quality.
+   - **`architect` Dispatch**: Always pass `Model: "pro"` (unless `Force Model Tier` in `AGENTS.md` overrides).
+   - **Reviewer Dispatch**: Pass `Model: "pro"` or `Model: "flash"` strictly following the Complexity-Scaled Reviewer Selection Matrix in Section 7 (unless `Force Model Tier` in `AGENTS.md` overrides).
+   - **Worker Dispatch**: Mechanical subtasks delegate to `Model: "flash"` or `"flash_lite"`.
+   - **`Force Model Tier` Override**: If `Force Model Tier: <pro|flash|inherit>` is configured in `AGENTS.md`, that tier overrides all subagent calls.
+   - **Reasoning Level**: Because `invoke_subagent` only accepts `Model`, `Prompt`, `Role`, `TypeName`, and `Workspace` in its tool schema, **always pass `Reasoning-Level: <low|medium|high>` as an explicit directive line at the top of the `Prompt` argument** (or inside `SystemPrompt` in `define_subagent`).
 
 ---
 
@@ -213,7 +219,7 @@ gh pr view <PR_NUM> -R "$REPO" --json additions,deletions,changedFiles,files
 
 ### Complexity-Scaled Reviewer Selection Matrix (Model & Reasoning Only)
 
-The complexity tier only selects each reviewer's `Model` and `Reasoning-Level` (passed as `Model` in `invoke_subagent` and `Reasoning-Level: <Level>` in the reviewer's `Prompt`). The actual review checks in [`references/reviewer-prompts.md`](references/reviewer-prompts.md) are triggered directly by what `gh pr diff` touches, so an underestimated complexity tier never skips required checks:
+The complexity tier selects each reviewer's `Model` and `Reasoning-Level` (passed as `Model` in `invoke_subagent` and `Reasoning-Level: <Level>` in the reviewer's `Prompt`). The actual review checks in [`references/reviewer-prompts.md`](references/reviewer-prompts.md) are triggered directly by what `gh pr diff` touches, so an underestimated complexity tier never skips required checks. *(Note: If `Force Model Tier` is configured in `AGENTS.md`, that tier overrides this matrix across all reviewers)*:
 
 | Complexity Tier | PR Size & Scope Characteristics (Any Codebase) | Spec Reviewer (`spec-reviewer`) | Standards Reviewer (`standards-reviewer`) | Security Reviewer (`security-reviewer`) |
 | :--- | :--- | :--- | :--- | :--- |
