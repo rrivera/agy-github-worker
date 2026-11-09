@@ -193,7 +193,7 @@ Follow the full contract in [`references/architect-prompt.md`](references/archit
      fi
      ```
    - Inspect repository config (`Makefile`, `package.json`, `go.mod`, `pyproject.toml`, `Cargo.toml`, `.github/workflows/`) and pass all tests, race detectors, linters, typecheckers, and builds before committing.
-6. **Commit, Push & Create PR**: Commit changes, `git -C ".worktrees/issue-<NUM>" push --force-with-lease -u origin "feat/issue-<NUM>"`, and create the PR via `gh_retry gh pr create -R "$REPO" --base main --head "feat/issue-<NUM>" --title "feat: <title> (#<NUM>)" --body-file <PR_BODY_MD>`.
+6. **Commit, Push & Create PR**: Commit changes, `git -C ".worktrees/issue-<NUM>" push -u origin "feat/issue-<NUM>"`, and create the PR via `gh_retry gh pr create -R "$REPO" --base main --head "feat/issue-<NUM>" --title "feat: <title> (#<NUM>)" --body-file <PR_BODY_MD>`.
 
 ### Flow B: `USER_REPLIED` or `NEEDS_REVISION` (Existing Worktree / Open PR)
 1. **Transition Label**: Ensure `<NUM>` is labeled `status:in-progress`.
@@ -204,7 +204,7 @@ Follow the full contract in [`references/architect-prompt.md`](references/archit
    - Fetch `origin/main` and rebase onto latest main, resolving any conflicts cleanly.
    - Address every human comment, peer review finding, or CI failure in `.worktrees/issue-<NUM>`, add regression tests, and re-run all quality gates.
 4. **Commit, Push & Update Without `gh pr create`**:
-   - Commit changes and push with lease: `git -C ".worktrees/issue-<NUM>" push --force-with-lease origin "feat/issue-<NUM>"`.
+   - Commit changes and push: `git -C ".worktrees/issue-<NUM>" push origin "feat/issue-<NUM>"`.
    - If an open PR already exists for `feat/issue-<NUM>`, do **not** run `gh pr create`; post a concise update comment ending with `<!-- antigravity-agent: phase=in-progress -->`.
 
 ---
@@ -281,7 +281,7 @@ Once all 3 peer reviewers record `APPROVE`:
    - **If conflicts occur**: Resolve conflicts cleanly inside `.worktrees/issue-<NUM>`, continue the rebase, and **re-run all mandatory quality gates**.
    - **If `PRE_REBASE_SHA != POST_REBASE_SHA`**: Because `HEAD` changed, **re-run all mandatory quality gates** (tests, linter, typecheck, build) before pushing:
      ```bash
-     git -C ".worktrees/issue-<NUM>" push --force-with-lease origin "feat/issue-<NUM>"
+     git -C ".worktrees/issue-<NUM>" push origin "feat/issue-<NUM>"
      ```
    - Confirm clean merge state on GitHub:
      ```bash

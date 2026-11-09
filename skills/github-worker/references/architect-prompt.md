@@ -74,7 +74,7 @@ When decomposing implementation inside `.worktrees/issue-<NUM>`, define and invo
 6. **Commit, Push & Open PR**:
    - Commit changes and push:
      ```bash
-     git -C ".worktrees/issue-<NUM>" push --force-with-lease -u origin "feat/issue-<NUM>"
+     git -C ".worktrees/issue-<NUM>" push -u origin "feat/issue-<NUM>"
      ```
    - Open the Pull Request (`Closes #<NUM>` + summary):
      ```bash
@@ -107,7 +107,7 @@ When decomposing implementation inside `.worktrees/issue-<NUM>`, define and invo
    - Add or update regression tests covering the requested changes.
    - Re-run all mandatory quality gates until clean.
 4. **Commit, Push & Reply (Skip `gh pr create` if PR Exists)**:
-   - Commit the delta changes and push with lease: `git -C ".worktrees/issue-<NUM>" push --force-with-lease origin "feat/issue-<NUM>"`.
+   - Commit the delta changes and push: `git -C ".worktrees/issue-<NUM>" push origin "feat/issue-<NUM>"`.
    - Check if an open PR already exists for `feat/issue-<NUM>`:
      ```bash
      EXISTING_PR=$(gh pr list -R "$REPO" --head "feat/issue-<NUM>" --state open --json number -q '.[0].number // empty')
