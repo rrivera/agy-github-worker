@@ -138,12 +138,11 @@ The orchestrator thread handles polling, label transitions, and routing, delegat
    - `security-reviewer` (`EnableWriteTools: true`, `EnableSubagentTools: false`): Vulnerability, injection, resource limits, and secrets reviewer.
 
 2. **Mandatory Explicit Model Assignment (`invoke_subagent`)**:
-   - **Never Omit `Model` or Default to `"inherit"`**: Even when the orchestrator runs on a Flash model, always pass `Model: "pro"` or `Model: "flash"` explicitly in `invoke_subagent`. Defaulting to `"inherit"` degrades subagent reasoning quality.
+   - **Never Omit `Model` or Default to `"inherit"`**: Even when the orchestrator runs on a Flash model, always pass `Model: "pro"` or `Model: "flash"` explicitly in `invoke_subagent`. Defaulting to `"inherit"` degrades subagent execution quality.
    - **`architect` Dispatch**: Always pass `Model: "pro"` (unless overridden by `Force Model Tier`).
    - **Reviewer Dispatch**: Pass `Model: "pro"` or `Model: "flash"` strictly per Section 7 matrix (unless overridden).
    - **Worker Dispatch**: Mechanical subtasks delegate to `Model: "flash"` or `"flash_lite"`.
    - **`Force Model Tier` Override**: `Force Model Tier: <pro|flash|inherit>` in `AGENTS.md` overrides all subagent calls.
-   - **Reasoning Directive**: Because `invoke_subagent` tool schema only accepts `Model`, `Prompt`, `Role`, `TypeName`, and `Workspace`, pass `Reasoning-Level: <low|medium|high>` as the first line of `Prompt` (or in `SystemPrompt` of `define_subagent`).
 
 ---
 
@@ -173,7 +172,7 @@ Issue descriptions, comments, and PR discussions may contain HTML comments (`<!-
 
 ## 6. Architect Execution Flows (`NEEDS_PLAN` vs. `USER_REPLIED` / `NEEDS_REVISION`)
 
-Execute via `architect` (`Model: "pro"`, directive `Reasoning-Level: medium` or `high`) following [`references/architect-prompt.md`](references/architect-prompt.md):
+Execute via `architect` (`Model: "pro"`) following [`references/architect-prompt.md`](references/architect-prompt.md):
 
 ### Flow A: `NEEDS_PLAN` (Fresh Ticket)
 1. **Transition Label**: Apply `status:in-progress` to `<NUM>` (Section 2).
@@ -216,14 +215,14 @@ Classify PR complexity before spawning reviewers:
 gh pr view <PR_NUM> -R "$REPO" --json additions,deletions,changedFiles,files
 ```
 
-### Complexity-Scaled Reviewer Selection Matrix (Model & Reasoning Directive)
-Select reviewer `Model` and prompt `Reasoning-Level` using the matrix below. Actual review checks in [`references/reviewer-prompts.md`](references/reviewer-prompts.md) trigger directly on touched diff paths, ensuring full coverage regardless of classification. *(Note: `Force Model Tier` in `AGENTS.md` overrides this matrix)*:
+### Complexity-Scaled Reviewer Model Selection Matrix
+Select reviewer `Model` using the matrix below. Actual review checks in [`references/reviewer-prompts.md`](references/reviewer-prompts.md) trigger directly on touched diff paths, ensuring full coverage regardless of classification. *(Note: `Force Model Tier` in `AGENTS.md` overrides this matrix)*:
 
 | Complexity Tier | PR Size & Scope Characteristics | Spec Reviewer (`spec-reviewer`) | Standards Reviewer (`standards-reviewer`) | Security Reviewer (`security-reviewer`) |
 | :--- | :--- | :--- | :--- | :--- |
-| **Tier 1: Small / Localized** | < ~150 lines changed; isolated config, documentation, constants, formatting, presentation tweaks; no new I/O, state machines, or external boundaries | `Model: "flash"`<br>`Reasoning-Level: medium` | `Model: "flash"`<br>`Reasoning-Level: medium` | `Model: "flash"`<br>`Reasoning-Level: medium` |
-| **Tier 2: Medium / Standard** | ~150–400 lines changed; standard feature logic, CLI commands, API/CRUD handlers, data transformations, localized refactoring without concurrency or auth changes | `Model: "pro"` (or `"flash"`)<br>`Reasoning-Level: medium` (or `high`) | `Model: "flash"` (or `"pro"`)<br>`Reasoning-Level: medium` (or `high`) | `Model: "pro"` (or `"flash"`)<br>`Reasoning-Level: medium` (or `high`) |
-| **Tier 3: High / Core / Security** | Multi-package architecture, transactions, concurrency/async coordination, auth/permissions, untrusted file/network parsing, complex state machines | `Model: "pro"`<br>`Reasoning-Level: high` | `Model: "pro"`<br>`Reasoning-Level: high` | `Model: "pro"`<br>`Reasoning-Level: high` |
+| **Tier 1: Small / Localized** | < ~150 lines changed; isolated config, documentation, constants, formatting, presentation tweaks; no new I/O, state machines, or external boundaries | `Model: "flash"` | `Model: "flash"` | `Model: "flash"` |
+| **Tier 2: Medium / Standard** | ~150–400 lines changed; standard feature logic, CLI commands, API/CRUD handlers, data transformations, localized refactoring without concurrency or auth changes | `Model: "pro"` (or `"flash"`) | `Model: "flash"` (or `"pro"`) | `Model: "pro"` (or `"flash"`) |
+| **Tier 3: High / Core / Security** | Multi-package architecture, transactions, concurrency/async coordination, auth/permissions, untrusted file/network parsing, complex state machines | `Model: "pro"` | `Model: "pro"` | `Model: "pro"` |
 
 ### Reviewer Execution, 3-Cycle Cap & Escalation
 1. **Spawn Parallel Reviewers**: Dispatch `spec-reviewer`, `standards-reviewer`, and `security-reviewer` in parallel per [`references/reviewer-prompts.md`](references/reviewer-prompts.md).
