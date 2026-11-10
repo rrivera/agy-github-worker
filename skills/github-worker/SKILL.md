@@ -158,6 +158,7 @@ Every issue comment and PR review posted by an agent must terminate with a hidde
 - **Pull Request Descriptions (`gh pr create`)**:
   Include `Closes #<NUM>` and a summary of implementation and test coverage.
 - **Peer Code Reviews (`gh pr review`)**:
+  Must begin with a top-level role heading (`## Spec Review (\`spec-reviewer\`)`, `## Standards Review (\`standards-reviewer\`)`, or `## Security Review (\`security-reviewer\`)`) so reviews are clearly distinguishable in the GitHub timeline, and end with:
   ```markdown
   <!-- antigravity-agent: phase=pr-review role=<spec-reviewer|standards-reviewer|security-reviewer> verdict=<APPROVE|REQUEST_CHANGES> -->
   ```
@@ -225,9 +226,11 @@ Select reviewer `Model` using the matrix below. Actual review checks in [`refere
 | **Tier 3: High / Core / Security** | Multi-package architecture, transactions, concurrency/async coordination, auth/permissions, untrusted file/network parsing, complex state machines | `Model: "pro"` | `Model: "pro"` | `Model: "pro"` |
 
 ### Reviewer Execution, 3-Cycle Cap & Escalation
-1. **Spawn Parallel Reviewers**: Dispatch `spec-reviewer`, `standards-reviewer`, and `security-reviewer` in parallel per [`references/reviewer-prompts.md`](references/reviewer-prompts.md).
+1. **Spawn Parallel Reviewers (Unbiased Dispatch)**:
+   - Dispatch `spec-reviewer`, `standards-reviewer`, and `security-reviewer` in parallel per [`references/reviewer-prompts.md`](references/reviewer-prompts.md).
+   - **No Prompt Spoiling**: Pass **only** target metadata (`Repository`, `Issue`, `PR`, `Base Branch`) and the reference path [`references/reviewer-prompts.md`](references/reviewer-prompts.md). Never summarize the PR implementation or pre-digest the checklist in the invocation prompt, as doing so anchors the reviewer.
 2. **Feedback Loop (Max 3 Cycles)**:
-   - If any reviewer submits `REQUEST_CHANGES`, route issue to `architect` on Flow B (`NEEDS_REVISION`) inside `.worktrees/issue-<NUM>`, commit, push, and re-trigger rejecting reviewer(s) on the updated diff.
+   - If any reviewer submits `REQUEST_CHANGES` (triggered by any `[BLOCKER]` or `[MAJOR]` finding), route issue to `architect` on Flow B (`NEEDS_REVISION`) inside `.worktrees/issue-<NUM>`, commit, push, and re-trigger rejecting reviewer(s) on the updated diff.
    - Enforce a hard maximum of **3 review cycles**.
 3. **Escalation on 3-Cycle Cap**:
    - If unresolved after 3 cycles, halt iteration.
