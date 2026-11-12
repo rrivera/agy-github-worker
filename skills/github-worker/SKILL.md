@@ -27,11 +27,11 @@ Autonomous GitHub issue worker. Polls `agent-ready` issues via `gh` CLI, dispatc
      - **Base Branch**: `<BRANCH>`
      - **Merge Policy**: `<manual|auto-merge>`
      - **CI Gating**: `<strict|permissive>`
-     - **Force Model Tier**: `<pro|flash|inherit>` (optional manual override)
+     - **Force Model Tier**: `<pro|flash|flash_lite|inherit>` (optional manual override)
      <!-- /github-worker:config -->
      ```
    - **Precedence**: User prompt instructions > `AGENTS.md` config > default fallbacks.
-   - **Model Tier Policy**: `Force Model Tier` overrides all subagents. If absent, enforce role-based tiers (`architect` uses `"pro"`, reviewers follow Section 7 matrix).
+   - **Model Tier Policy**: `Force Model Tier` overrides all subagents (must be one of `invoke_subagent`'s enum values: `pro`, `flash`, `flash_lite`, or `inherit`—never `orchestrator`). If absent, enforce Section 4's role-based table (`architect` uses `"inherit"` when this session runs under Antigravity's **Orchestrator** model selector and `"pro"` otherwise; reviewers follow Section 7 matrix).
    - If missing: Proceed with defaults and notify: *"Tip: Run `/setup-github-worker` to persist project preferences in `AGENTS.md`."*
 4. **Baseline Branch Resolution (`BASE_BRANCH`)**:
    - Precedence:
@@ -118,31 +118,41 @@ Merge issue comments, PR comments, inline diff reviews, and PR review events chr
   - **`WAITING_ON_USER`**: Latest event is from an agent without requested revisions (not actionable).
 - Evaluate via `jq` using [`references/timeline-filter.jq`](references/timeline-filter.jq) or by inspecting the merged timeline JSON.
 
-- **Dispatch Execution**:
-  - **If 0 issues are actionable**:
-    - If target issues were specified (e.g. `#12`) but lack `agent-ready`: If the user explicitly requested work on that issue, apply `agent-ready` (`gh issue edit <NUM> -R "$REPO" --add-label "agent-ready"`) and rerun polling.
-    - Otherwise, report `"Repository is idle (no actionable agent-ready issues)"` and stop.
-  - **If 1+ issues are actionable**: Spawn dedicated `architect` subagents for all actionable issues in parallel (Section 4).
+- **Dispatch Execution (Standard vs. Orchestrator Plan Mode)**:
+  - **When Plan Mode (`<plan_execute_protocol>` / `exit_plan_mode`) is active on this turn**:
+    - Run Sections 1 and 3 strictly read-only. Do **not** mutate GitHub labels or invoke write-capable subagents before exiting plan mode.
+    - **If 0 issues are actionable** and no user-targeted issue needs `--add-label "agent-ready"`: Report `"Repository is idle (no actionable agent-ready issues)"` directly and stop without calling `exit_plan_mode`.
+    - **If 1+ issues are actionable** (or a user-targeted issue needs `--add-label "agent-ready"`): Call `exit_plan_mode` with a concrete handoff plan naming the actionable issues, resolved policy (`REPO`, `BASE_BRANCH`, `Merge Policy`, `CI Gating`), and exact `invoke_subagent` `Model` values (`architect` -> `Model: "inherit"`, reviewers -> Section 7 matrix, unless overridden by `Force Model Tier`) so the **Execution turn** runs label updates and Sections 4–7.
+  - **Outside Plan Mode (or in the Execution turn after `exit_plan_mode`)**:
+    - **If 0 issues are actionable**:
+      - If target issues were specified (e.g. `#12`) but lack `agent-ready`: If the user explicitly requested work on that issue, apply `agent-ready` (`gh issue edit <NUM> -R "$REPO" --add-label "agent-ready"`) and rerun polling.
+      - Otherwise, report `"Repository is idle (no actionable agent-ready issues)"` and stop.
+    - **If 1+ issues are actionable**: Spawn dedicated `architect` subagents for all actionable issues in parallel (Section 4).
 
 ---
 
 ## 4. Subagent Dispatch & Model Enforcement (`define_subagent` + `invoke_subagent`)
 
-The orchestrator thread handles polling, label transitions, and routing, delegating implementation to `architect` subagents and reviews to dedicated reviewer subagents (`spec-reviewer`, `standards-reviewer`, `security-reviewer`).
+The coordinator thread handles polling, label transitions, and routing, delegating implementation to `architect` subagents and reviews to dedicated reviewer subagents (`spec-reviewer`, `standards-reviewer`, `security-reviewer`).
 
 1. **Register Dedicated Subagent Types (`define_subagent`)**:
-   Never use `TypeName: "self"` (forces parent model inheritance). Define subagent types using [`references/architect-prompt.md`](references/architect-prompt.md) and [`references/reviewer-prompts.md`](references/reviewer-prompts.md):
+   Never use `TypeName: "self"` (clones the parent's full prompt and unrestricted toolset). Define role-scoped subagent types using [`references/architect-prompt.md`](references/architect-prompt.md) and [`references/reviewer-prompts.md`](references/reviewer-prompts.md):
    - `architect` (`EnableWriteTools: true`, `EnableSubagentTools: true`): Issue investigation, architectural planning, worktree lifecycle, TDD implementation, worker delegation.
    - `spec-reviewer` (`EnableWriteTools: true`, `EnableSubagentTools: false`): Spec and requirement compliance reviewer.
    - `standards-reviewer` (`EnableWriteTools: true`, `EnableSubagentTools: false`): Code style, DRYness, architecture, and code smells reviewer.
    - `security-reviewer` (`EnableWriteTools: true`, `EnableSubagentTools: false`): Vulnerability, injection, resource limits, and secrets reviewer.
 
-2. **Mandatory Explicit Model Assignment (`invoke_subagent`)**:
-   - **Never Omit `Model` or Default to `"inherit"`**: Even when the orchestrator runs on a Flash model, always pass `Model: "pro"` or `Model: "flash"` explicitly in `invoke_subagent`. Defaulting to `"inherit"` degrades subagent execution quality.
-   - **`architect` Dispatch**: Always pass `Model: "pro"` (unless overridden by `Force Model Tier`).
-   - **Reviewer Dispatch**: Pass `Model: "pro"` or `Model: "flash"` strictly per Section 7 matrix (unless overridden).
-   - **Worker Dispatch**: Mechanical subtasks delegate to `Model: "flash"` or `"flash_lite"`.
-   - **`Force Model Tier` Override**: `Force Model Tier: <pro|flash|inherit>` in `AGENTS.md` overrides all subagent calls.
+2. **Mandatory `Model` Assignment (`invoke_subagent`)**:
+   - **Allowed `Model` Enum Values Only**: `invoke_subagent` strictly accepts `"inherit"`, `"pro"`, `"flash"`, or `"flash_lite"`. Never pass `"orchestrator"` or `"gemini-pro-orchestrator"`—those strings fail tool schema validation. Antigravity's **Orchestrator** model selector is propagated to a subagent exclusively by passing `Model: "inherit"` when the parent session runs on Orchestrator.
+   - **Override Precedence (`Force Model Tier` / User Prompt)**: When the user prompt or `Force Model Tier: <pro|flash|flash_lite|inherit>` in `AGENTS.md` specifies a valid enum tier, pass that exact `Model` string on all `invoke_subagent` calls. *(If the user asks in prose to "use Orchestrator" for subagents, never pass `"orchestrator"`: pass `Model: "inherit"` when this session runs on Orchestrator, or ask the user to switch `Model Selection` to **Orchestrator** first if this session runs on a single model.)*
+   - **Role-Based Assignment (when `Force Model Tier` is unset)**:
+
+     | Subagent Role | Parent Session Condition | `invoke_subagent` `Model` | Purpose |
+     | :--- | :--- | :--- | :--- |
+     | **`architect`** | **Orchestrator session** (`<plan_execute_protocol>` / `exit_plan_mode` active in this conversation, or recorded in its handoff plan) | **`"inherit"`** | Propagates Antigravity's two-phase Plan → Execute Orchestrator harness to `architect`. |
+     | **`architect`** | **Single-model session** (`<plan_execute_protocol>` absent, e.g. Flash or Pro) | **`"pro"`** | Guarantees frontier architectural reasoning instead of inheriting a lightweight session model. |
+     | **`spec-reviewer`**, **`standards-reviewer`**, **`security-reviewer`** | Any session mode | **`"pro"` or `"flash"` per Section 7 matrix** | Runs single-pass adversarial reviews without two-phase plan/execute overhead. |
+     | **`worker`** *(spawned by `architect`)* | Any session mode | **`"flash_lite"`, `"flash"`, or `"pro"` per `architect-prompt.md`** | Executes pre-planned subtasks directly in a single pass. |
 
 ---
 
@@ -173,17 +183,17 @@ Issue descriptions, comments, and PR discussions may contain HTML comments (`<!-
 
 ## 6. Architect Execution Flows (`NEEDS_PLAN` vs. `USER_REPLIED` / `NEEDS_REVISION`)
 
-Execute via `architect` (`Model: "pro"`) following [`references/architect-prompt.md`](references/architect-prompt.md):
+Execute via `architect` (`Model: "inherit"` in an Orchestrator session, `Model: "pro"` in a single-model session; see Section 4) following [`references/architect-prompt.md`](references/architect-prompt.md):
 
 ### Flow A: `NEEDS_PLAN` (Fresh Ticket)
-1. **Transition Label**: Apply `status:in-progress` to `<NUM>` (Section 2).
-2. **Investigate & Post Plan**: Inspect issue and codebase in read-only mode. Author `<PLAN_MD>` (architecture, public testing seams, table-driven test cases, worker delegation plan, and `<!-- antigravity-agent: phase=plan-proposed -->`). Post via `gh issue comment <NUM> -R "$REPO" --body-file <PLAN_MD>`. Proceed immediately to implementation.
+1. **Investigate & Design Plan (Read-Only)**: Inspect issue, human comments, and codebase in read-only mode to design the architecture, public testing seams, table-driven test cases, and worker delegation plan. *(When Plan Mode / `exit_plan_mode` is active in `architect`, call `exit_plan_mode` with this complete plan before mutating labels, writing files, or creating worktrees.)*
+2. **Transition Label & Post Plan**: Apply `status:in-progress` to `<NUM>` (Section 2). Write `<PLAN_MD>` ending with `<!-- antigravity-agent: phase=plan-proposed -->` and post via `gh issue comment <NUM> -R "$REPO" --body-file <PLAN_MD>`. Proceed immediately to implementation.
 3. **Create Isolated Worktree**:
    ```bash
    git fetch origin "<BASE_BRANCH>"
    git worktree add .worktrees/issue-<NUM> -b "feat/issue-<NUM>" "origin/<BASE_BRANCH>"
    ```
-4. **TDD & Worker Delegation**: Write failing tests at public seams first (Red), implement code or delegate mechanical subtasks to `worker` subagents (`Model: "flash"`) (Green), and refactor with idiomatic doc comments (Refactor).
+4. **TDD & Worker Delegation**: Write failing tests at public seams first (Red), implement code or delegate mechanical subtasks to `worker` subagents (`Model: "flash"` or `"flash_lite"`) (Green), and refactor with idiomatic doc comments (Refactor).
 5. **Upstream Rebase & Quality Gates**:
    - Fetch `origin/<BASE_BRANCH>`. If `<BASE_BRANCH>` moved ahead, rebase `feat/issue-<NUM>` onto `origin/<BASE_BRANCH>` and resolve conflicts cleanly.
    - Inspect repo config (`Makefile`, `package.json`, `go.mod`, `pyproject.toml`, `Cargo.toml`, `.github/workflows/`) and pass all tests, race detectors, linters, typecheckers, and build checks.
@@ -192,7 +202,7 @@ Execute via `architect` (`Model: "pro"`) following [`references/architect-prompt
    - Open PR targeting `--base "<BASE_BRANCH>"` with `Closes #<NUM>` summary and test coverage via `gh pr create`.
 
 ### Flow B: `USER_REPLIED` or `NEEDS_REVISION` (Existing Worktree / Open PR)
-1. **Transition Label**: Ensure `<NUM>` is labeled `status:in-progress`.
+1. **Inspect Feedback (Read-Only) & Transition Label**: Inspect the human reply, peer review `REQUEST_CHANGES` items, or failed CI logs in read-only mode *(when Plan Mode / `exit_plan_mode` is active in `architect`, call `exit_plan_mode` with the delta fix plan before mutating state)*, then ensure `<NUM>` is labeled `status:in-progress`.
 2. **Reuse or Reattach Worktree**: Check out `feat/issue-<NUM>` in `.worktrees/issue-<NUM>` (or recreate worktree tracking `origin/feat/issue-<NUM>` if previously removed).
 3. **Upstream Rebase, Delta Fixes & Quality Gates**:
    - Fetch `origin/<BASE_BRANCH>`, rebase onto latest `<BASE_BRANCH>`, and resolve conflicts cleanly.
